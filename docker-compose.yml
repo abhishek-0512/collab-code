@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: collab-code-server
+    restart: unless-stopped
+    ports:
+      - '5001:5001'
+    environment:
+      - PORT=5001
+      - NODE_ENV=production
+      - CLIENT_URL=http://localhost:3000
+      - MONGODB_URI=mongodb://mongo:27017/collab-code
+      - JWT_SECRET=change-this-in-production-collab-code-jwt-secret
+      - REDIS_URL=redis://redis:6379
+      - PISTON_URL=https://emkc.org/api/v2/piston
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - collab-net
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: collab-code-client
+    restart: unless-stopped
+    ports:
+      - '3000:80'
+    depends_on:
+      - server
+    networks:
+      - collab-net
+
+  mongo:
+    image: mongo:7.0
+    container_name: collab-code-mongo
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - collab-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: collab-code-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    networks:
+      - collab-net
+
+networks:
+  collab-net:
+    driver: bridge
+
+volumes:
+  mongo-data:
+  redis-data:
