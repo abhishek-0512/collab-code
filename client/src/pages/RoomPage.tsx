@@ -487,7 +487,7 @@ export function RoomPage() {
   };
 
   // 8. Run Sample Tests Action
-  const handleRunSampleTests = async () => {
+  const handleRunSampleTests = async (customInputOverride?: string) => {
     if (!myCode.trim()) return;
 
     setRunning(true);
@@ -497,9 +497,10 @@ export function RoomPage() {
     }
 
     try {
-      // If user typed custom input, run against custom test case
-      const testCasesToRun = customInput.trim()
-        ? [{ input: customInput.trim(), expectedOutput: '' }]
+      // If user typed custom input or passed custom input override, run against custom test case
+      const hasCustom = typeof customInputOverride === 'string' && customInputOverride.trim().length > 0;
+      const testCasesToRun = hasCustom
+        ? [{ input: customInputOverride.trim(), expectedOutput: '' }]
         : undefined;
 
       const evalResult = await executionService.testCode({
@@ -519,7 +520,7 @@ export function RoomPage() {
         });
       }
     } catch (err: any) {
-      setTestSuiteResult(null);
+      console.error('Test run failed:', err);
       if (socket && roomId) {
         socket.emit('workspace:running', {
           roomId,
@@ -601,6 +602,27 @@ export function RoomPage() {
       setRunning(false);
     }
   };
+
+  // Keyboard shortcut handler for online compiler experience (Ctrl/Cmd + Enter to Submit, Ctrl/Cmd + ' to Run)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+      if (isCmdOrCtrl && e.key === 'Enter') {
+        e.preventDefault();
+        handleSubmitSolution();
+      } else if (isCmdOrCtrl && (e.key === "'" || e.key === '"')) {
+        e.preventDefault();
+        if (problem) {
+          handleRunSampleTests();
+        } else {
+          handleRunCode();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [problem, myCode, myLanguage, roomId, running, submitting]);
 
   // Chat message handlers
   const handleSendMessage = (e: React.FormEvent) => {
@@ -885,13 +907,31 @@ export function RoomPage() {
                     </Tooltip>
 
                     <button
-                      onClick={handleRunCode}
-                      disabled={running}
+                      onClick={() => (problem ? handleRunSampleTests() : handleRunCode())}
+                      disabled={running || submitting}
                       className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700/80 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
-                      title="Run current code"
+                      title="Run code against sample test cases (Ctrl/Cmd + ')"
                     >
-                      <Play size={11} className="text-emerald-400" />
+                      {running ? (
+                        <Loader2 size={11} className="animate-spin text-emerald-400" />
+                      ) : (
+                        <Play size={11} className="text-emerald-400 fill-emerald-400" />
+                      )}
                       <span>Run</span>
+                    </button>
+
+                    <button
+                      onClick={handleSubmitSolution}
+                      disabled={running || submitting}
+                      className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 shadow-sm shadow-emerald-600/30"
+                      title="Submit solution to verify all test cases (Ctrl/Cmd + Enter)"
+                    >
+                      {submitting ? (
+                        <Loader2 size={11} className="animate-spin text-white" />
+                      ) : (
+                        <Check size={12} />
+                      )}
+                      <span>Submit</span>
                     </button>
                   </div>
 

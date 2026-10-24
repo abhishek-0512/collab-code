@@ -134,4 +134,47 @@ class Solution {
     assert.strictEqual(javaResult.status, 'accepted');
     assert.strictEqual(javaResult.allPassed, true);
   });
+
+  it('evaluateTestCases should support Python class Solution with typing List[int]', async () => {
+    const pyCode = `
+class Solution:
+    def twoSum(self, nums: List[int], target: int) -> List[int]:
+        m = {}
+        for i, n in enumerate(nums):
+            if target - n in m:
+                return [m[target - n], i]
+            m[n] = i
+        return []
+`;
+    const testCases = [{ input: '[2,7,11,15]\n9', expectedOutput: '[0,1]' }];
+    const result = await evaluateTestCases(pyCode, 'python', testCases, 'two-sum');
+    assert.strictEqual(result.status, 'accepted');
+    assert.strictEqual(result.allPassed, true);
+  });
+
+  it('evaluateTestCases should support Java non-static method in Solution class', async () => {
+    const javaCode = `
+class Solution {
+    public int[] twoSum(int[] nums, int target) {
+        return new int[]{0, 1};
+    }
+}
+`;
+    const testCases = [{ input: '[2,7,11,15]\n9', expectedOutput: '[0,1]' }];
+    const result = await evaluateTestCases(javaCode, 'java', testCases, 'two-sum');
+    assert.strictEqual(result.status, 'accepted');
+    assert.strictEqual(result.allPassed, true);
+  });
+
+  it('evaluateTestCases should pass custom input without expected output', async () => {
+    const pyCode = `
+def two_sum(nums, target):
+    return [0, 1]
+`;
+    const testCases = [{ input: '[1,2,3]\n4', expectedOutput: '' }];
+    const result = await evaluateTestCases(pyCode, 'python', testCases, 'two-sum');
+    assert.strictEqual(result.status, 'accepted');
+    assert.strictEqual(result.allPassed, true);
+    assert.strictEqual(result.testResults[0].passed, true);
+  });
 });
