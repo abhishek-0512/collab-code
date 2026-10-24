@@ -251,6 +251,17 @@ npm run build
 
 ---
 
+## Cloud & PaaS Deployment
+
+Deploy Collab-Code easily to cloud providers:
+- **Render (1-Click Blueprint)**: Uses the bundled [`render.yaml`](./render.yaml) to automatically deploy the Node.js backend Web Service and React Static Site.
+- **Render Server + Vercel Client**: Host the persistent WebSocket backend on Render and the frontend SPA on Vercel with automated continuous deployment.
+- **Database**: Connect free-tier MongoDB Atlas (`MONGODB_URI`) and Upstash Redis (`REDIS_URL`).
+
+👉 Read the full step-by-step [Cloud Deployment Guide](./docs/DEPLOYMENT_GUIDE.md).
+
+---
+
 ## Docker Deployment
 
 To launch the full production stack including Client, Server, MongoDB, and Redis:
