@@ -114,7 +114,7 @@ vector<int> twoSum(vector<int>& nums, int target) {
 `;
     const testCases = [{ input: '[2,7,11,15]\n9', expectedOutput: '[0,1]' }];
     const cppResult = await evaluateTestCases(cppCode, 'cpp', testCases, 'two-sum');
-    assert.strictEqual(cppResult.status, 'accepted');
+    assert.strictEqual(cppResult.status, 'accepted', JSON.stringify(cppResult));
     assert.strictEqual(cppResult.allPassed, true);
 
     const javaCode = `
@@ -131,7 +131,7 @@ class Solution {
 }
 `;
     const javaResult = await evaluateTestCases(javaCode, 'java', testCases, 'two-sum');
-    assert.strictEqual(javaResult.status, 'accepted');
+    assert.strictEqual(javaResult.status, 'accepted', JSON.stringify(javaResult));
     assert.strictEqual(javaResult.allPassed, true);
   });
 
