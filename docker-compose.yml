@@ -16,10 +16,15 @@ services:
       - MONGODB_URI=mongodb://mongo:27017/collab-code
       - JWT_SECRET=change-this-in-production-collab-code-jwt-secret
       - REDIS_URL=redis://redis:6379
-      - PISTON_URL=https://emkc.org/api/v2/piston
+      - EXECUTION_PROVIDER=judge0
+      - JUDGE0_URL=http://judge0-server:2358
+      - JUDGE0_TOKEN=collab-code-judge-change-me
+      - EXECUTION_TIMEOUT_MS=8000
+      - EXECUTION_OUTPUT_LIMIT_BYTES=262144
     depends_on:
       - mongo
       - redis
+      - judge0-server
     networks:
       - collab-net
 
@@ -58,6 +63,58 @@ services:
     networks:
       - collab-net
 
+  judge0-server:
+    image: judge0/judge0:latest
+    container_name: collab-code-judge0-server
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - ./judge0/judge0.conf:/judge0.conf:ro
+    ports:
+      - '2358:2358'
+    depends_on:
+      - judge0-db
+      - judge0-redis
+    networks:
+      - collab-net
+
+  judge0-worker:
+    image: judge0/judge0:latest
+    container_name: collab-code-judge0-worker
+    restart: unless-stopped
+    privileged: true
+    command: ['./scripts/workers']
+    volumes:
+      - ./judge0/judge0.conf:/judge0.conf:ro
+    depends_on:
+      - judge0-db
+      - judge0-redis
+    networks:
+      - collab-net
+
+  judge0-db:
+    image: postgres:16.2
+    container_name: collab-code-judge0-db
+    restart: unless-stopped
+    env_file:
+      - ./judge0/judge0.conf
+    volumes:
+      - judge0-data:/var/lib/postgresql/data
+    networks:
+      - collab-net
+
+  judge0-redis:
+    image: redis:7.2.4
+    container_name: collab-code-judge0-redis
+    restart: unless-stopped
+    command: ['bash', '-c', 'docker-entrypoint.sh --appendonly no --requirepass "$$REDIS_PASSWORD"']
+    env_file:
+      - ./judge0/judge0.conf
+    volumes:
+      - judge0-redis-data:/data
+    networks:
+      - collab-net
+
 networks:
   collab-net:
     driver: bridge
@@ -65,3 +122,7 @@ networks:
 volumes:
   mongo-data:
   redis-data:
+    driver: local
+  judge0-data:
+    driver: local
+  judge0-redis-data:

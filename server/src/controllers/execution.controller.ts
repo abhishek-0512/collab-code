@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import { randomUUID } from 'node:crypto';
 import type { AuthenticatedRequest } from '../types';
 import { executeCode, evaluateTestCases, TestCaseItem } from '../services/execution.service';
-import { getProblemBySlug } from '../services/problem.service';
+import { getProblemBySlug, getProblemForJudge } from '../services/problem.service';
 import { Submission } from '../models/Submission';
 import { sendSuccess, sendError } from '../utils/apiResponse';
 
@@ -14,7 +14,7 @@ export interface MemorySubmission {
   username: string;
   problemSlug?: string;
   language: string;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit';
+  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit' | 'judge_error';
   passedCount: number;
   totalCount: number;
   executionTimeMs: number;
@@ -77,6 +77,11 @@ export async function testCode(req: AuthenticatedRequest, res: Response): Promis
     } else if (problemSlug) {
       try {
         const problem = await getProblemBySlug(problemSlug);
+        const supportedLanguages = 'supportedLanguages' in problem ? problem.supportedLanguages : undefined;
+        if (supportedLanguages && !supportedLanguages.includes(language.toLowerCase())) {
+          sendError(res, `Language "${language}" is not supported for this problem`, 422);
+          return;
+        }
         if (problem && problem.testCases && problem.testCases.length > 0) {
           // For sample runs, only run visible tests
           const sampleCases = problem.testCases.filter((tc: any) => !tc.isHidden);
@@ -119,32 +124,34 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
     }
 
     let allProblemCases: Array<{ input: string; expectedOutput: string; isHidden?: boolean }> = [];
+    let judgeVersion = '1';
 
     if (problemSlug) {
       try {
-        const problem = await getProblemBySlug(problemSlug);
+        const problem = await getProblemForJudge(problemSlug);
+        const judgeStatus = 'judgeStatus' in problem ? problem.judgeStatus : undefined;
+        if (judgeStatus !== 'VERIFIED') {
+          sendError(res, `Problem judge status is ${judgeStatus}; it is not eligible for submission`, 409);
+          return;
+        }
+        const supportedLanguages = 'supportedLanguages' in problem ? problem.supportedLanguages : undefined;
+        if (supportedLanguages && !supportedLanguages.includes(language.toLowerCase())) {
+          sendError(res, `Language "${language}" is not supported for this problem`, 422);
+          return;
+        }
         if (problem && problem.testCases && problem.testCases.length > 0) {
           allProblemCases = problem.testCases;
+          judgeVersion = 'judgeVersion' in problem && typeof problem.judgeVersion === 'string' ? problem.judgeVersion : '1';
         }
       } catch {
         // Fallback
       }
     }
 
-    // If no test cases exist, execute single run
+    // A submission without an authoritative suite cannot be accepted.
     if (allProblemCases.length === 0) {
-      const singleRun = await executeCode({ code, language });
-      const verdict = singleRun.status === 'success' ? 'accepted' : singleRun.status === 'compile_error' ? 'compile_error' : 'runtime_error';
-      return sendSuccess(res, {
-        submissionId: randomUUID(),
-        verdict,
-        allPassed: verdict === 'accepted',
-        passedCount: verdict === 'accepted' ? 1 : 0,
-        totalCount: 1,
-        executionTimeMs: singleRun.executionTimeMs,
-        testResults: [],
-        status: verdict,
-      });
+      sendError(res, 'This problem has no authoritative judge test suite', 409);
+      return;
     }
 
     const evaluation = await evaluateTestCases(
@@ -161,6 +168,8 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
         ? 'time_limit'
         : evaluation.status === 'runtime_error'
         ? 'runtime_error'
+        : evaluation.status === 'judge_error'
+        ? 'judge_error'
         : evaluation.allPassed
         ? 'accepted'
         : 'wrong_answer';
@@ -192,6 +201,8 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
         await Submission.create({
           roomId,
           userId: req.user?.userId ? new mongoose.Types.ObjectId(req.user.userId) : new mongoose.Types.ObjectId(),
+          problemSlug,
+          judgeVersion,
           language,
           code,
           status: verdict,

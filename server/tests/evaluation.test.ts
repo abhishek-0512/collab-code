@@ -166,15 +166,15 @@ class Solution {
     assert.strictEqual(result.allPassed, true);
   });
 
-  it('evaluateTestCases should pass custom input without expected output', async () => {
+  it('evaluateTestCases should reject custom input without expected output', async () => {
     const pyCode = `
 def two_sum(nums, target):
     return [0, 1]
 `;
     const testCases = [{ input: '[1,2,3]\n4', expectedOutput: '' }];
     const result = await evaluateTestCases(pyCode, 'python', testCases, 'two-sum');
-    assert.strictEqual(result.status, 'accepted');
-    assert.strictEqual(result.allPassed, true);
-    assert.strictEqual(result.testResults[0].passed, true);
+    assert.strictEqual(result.status, 'wrong_answer');
+    assert.strictEqual(result.allPassed, false);
+    assert.strictEqual(result.testResults[0].passed, false);
   });
 });

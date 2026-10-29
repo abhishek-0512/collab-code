@@ -20,8 +20,16 @@ services:
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 7d
-      - key: PISTON_URL
-        value: https://emkc.org/api/v2/piston
+      - key: EXECUTION_PROVIDER
+        value: judge0
+      - key: JUDGE0_URL
+        value: https://ce.judge0.com
+      - key: JUDGE0_TOKEN
+        sync: false
+      - key: EXECUTION_TIMEOUT_MS
+        value: '8000'
+      - key: EXECUTION_OUTPUT_LIMIT_BYTES
+        value: '262144'
 
   # Collab Code Frontend Single Page Application
   - type: web

@@ -394,31 +394,65 @@ function isMongoConnected(): boolean {
   return mongoose.connection.readyState === 1;
 }
 
+function publicProblem<T extends Record<string, any>>(problem: T): T {
+  const { testCases, ...metadata } = problem;
+  return {
+    ...metadata,
+    testCases: Array.isArray(testCases)
+      ? testCases.filter((testCase) => !testCase.isHidden)
+      : undefined,
+  } as unknown as T;
+}
+
+function judgeMetadata<T extends Record<string, any>>(problem: T): T {
+  return {
+    ...problem,
+    problemId: problem.problemId || problem.slug,
+    problemType: problem.problemType || 'function',
+    supportedLanguages: problem.supportedLanguages || Object.keys(problem.starterCode || {}),
+    comparatorType: problem.comparatorType || (problem.slug === 'two-sum' ? 'unordered_array' : 'exact'),
+    judgeStatus: problem.judgeStatus || (problem.testCases?.length ? 'VERIFIED' : 'NEEDS_TESTS'),
+    judgeVersion: problem.judgeVersion || '1',
+  } as T;
+}
+
 export async function getProblems(difficulty?: string) {
   if (isMongoConnected()) {
     const query: Record<string, unknown> = {};
     if (difficulty) {
       query.difficulty = difficulty;
     }
-    return Problem.find(query).sort({ createdAt: 1 });
+    const problems = await Problem.find(query).sort({ createdAt: 1 }).lean();
+    return problems.map((problem) => publicProblem(judgeMetadata(problem)));
   }
 
   if (difficulty) {
-    return DEFAULT_PROBLEMS.filter((p) => p.difficulty === difficulty);
+    return DEFAULT_PROBLEMS.filter((p) => p.difficulty === difficulty).map((problem) => publicProblem(judgeMetadata(problem)));
   }
-  return DEFAULT_PROBLEMS;
+  return DEFAULT_PROBLEMS.map((problem) => publicProblem(judgeMetadata(problem)));
 }
 
 export async function getProblemBySlug(slug: string) {
   if (isMongoConnected()) {
-    const problem = await Problem.findOne({ slug });
+    const problem = await Problem.findOne({ slug }).lean();
     if (!problem) throw new Error('Problem not found');
-    return problem;
+    return publicProblem(judgeMetadata(problem));
   }
 
   const found = DEFAULT_PROBLEMS.find((p) => p.slug === slug);
   if (!found) throw new Error('Problem not found');
-  return found;
+  return publicProblem(judgeMetadata(found));
+}
+
+export async function getProblemForJudge(slug: string) {
+  if (isMongoConnected()) {
+    const problem = await Problem.findOne({ slug }).lean();
+    if (!problem) throw new Error('Problem not found');
+    return judgeMetadata(problem);
+  }
+  const found = DEFAULT_PROBLEMS.find((p) => p.slug === slug);
+  if (!found) throw new Error('Problem not found');
+  return judgeMetadata(found);
 }
 
 export async function createProblem(data: {

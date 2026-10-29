@@ -1,5 +1,6 @@
 node_modules/
 .env
+judge0/judge0.conf.local
 .env.local
 .env.*.local
 dist/

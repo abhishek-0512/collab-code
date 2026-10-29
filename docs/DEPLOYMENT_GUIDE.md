@@ -11,7 +11,7 @@ Collab-Code consists of:
 2. **Backend Server (`server/`)**: Node.js + Express + Socket.IO + WebRTC signaling. Requires a persistent Node process (e.g. **Render Web Service**, **Railway**, or **Fly.io**).
 3. **Database**: **MongoDB Atlas** (Free M0 shared cluster) or local Mongo.
 4. **Cache & Scaling Adapter**: **Upstash Redis** (free serverless Redis) or Railway Redis.
-5. **Code Execution API**: Piston API (`https://emkc.org/api/v2/piston`) or self-hosted Judge0/Piston.
+5. **Code Execution API**: Self-hosted Judge0 on a dedicated Docker host.
 
 ---
 
@@ -63,9 +63,16 @@ If you prefer Vercel for high-speed edge delivery of the React frontend:
    | `JWT_EXPIRES_IN` | `7d` | Token lifetime |
    | `MONGODB_URI` | `mongodb+srv://<user>:<password>@cluster.mongodb.net/collab-code` | MongoDB Atlas URI |
    | `CLIENT_URL` | `https://<your-vercel-app>.vercel.app` | Vercel frontend URL for CORS |
-   | `PISTON_URL` | `https://emkc.org/api/v2/piston` | Code execution endpoint |
+   | `EXECUTION_PROVIDER` | `judge0` | Use the Judge0 provider |
+   | `JUDGE0_URL` | `https://<your-judge0-host>` | Private Judge0 URL |
+   | `JUDGE0_TOKEN` | *(server-only secret)* | Must match Judge0 `AUTHN_TOKEN` |
    | `REDIS_URL` | `redis://...` *(optional)* | Upstash Redis URI |
 5. Click **Create Web Service**. Note your server URL (e.g., `https://collab-code-server.onrender.com`).
+
+> Render and similar restricted PaaS services are not suitable for hosting Judge0 workers.
+> Host Judge0 on a dedicated Ubuntu VPS or bare-metal server with Docker, then point
+> `JUDGE0_URL` at that host. Keep port `2358` private if possible and expose it only
+> to the Collab Code backend.
 
 ---
 
@@ -84,6 +91,36 @@ If you prefer Vercel for high-speed edge delivery of the React frontend:
    | `VITE_SOCKET_URL` | `https://collab-code-server.onrender.com` | Socket.IO server URL |
 5. Click **Deploy**. Vercel will build and assign your frontend URL (e.g. `https://collab-code.vercel.app`).
 6. Update the `CLIENT_URL` variable in your Render Server settings with your live Vercel domain.
+
+## Option 3: Self-host Judge0 with Docker
+
+The repository includes the official Judge0 server, worker, PostgreSQL, and Redis
+services in `docker-compose.yml`. Use a dedicated Linux host; Judge0 requires
+privileged containers for its sandbox workers.
+
+1. Install Docker Engine and the Compose plugin on the host.
+2. Clone this repository and replace the development values in `judge0/judge0.conf`:
+   `AUTHN_TOKEN`, `REDIS_PASSWORD`, and `POSTGRES_PASSWORD`.
+3. Use the same `AUTHN_TOKEN` as `JUDGE0_TOKEN` for the Collab Code server.
+4. Start the stack:
+   ```bash
+   docker compose up -d
+   docker compose ps
+   ```
+5. Verify Judge0:
+   ```bash
+   curl -H 'X-Auth-Token: YOUR_AUTHN_TOKEN' http://127.0.0.1:2358/languages
+   ```
+6. For a separate Judge0 host, configure:
+   ```env
+   EXECUTION_PROVIDER=judge0
+   JUDGE0_URL=http://PRIVATE_JUDGE0_HOST:2358
+   JUDGE0_TOKEN=YOUR_AUTHN_TOKEN
+   ```
+
+Do not expose Judge0 without authentication. Do not run these privileged workers
+on the same small public application instance, and do not use the committed
+development passwords in production.
 
 ---
 
@@ -108,5 +145,5 @@ If you prefer Vercel for high-speed edge delivery of the React frontend:
 - [ ] **Frontend Routing**: Navigate to `https://<your-client-url>/register`, test refreshing the page (ensures SPA rewrite works).
 - [ ] **User Registration & Login**: Create a test account, check if JWT is stored in `localStorage`.
 - [ ] **Collaborative Room & WebSockets**: Create a room, share the link or open an incognito window, verify that editor typing synchronizes in real time.
-- [ ] **Code Execution**: Run code in Python or JavaScript, verify execution output from Piston API.
+- [ ] **Code Execution**: Run code in Python or JavaScript, verify execution output from self-hosted Judge0.
 - [ ] **WebRTC Voice**: Join the voice lounge, allow microphone permissions, and verify audio connectivity across tabs/devices.
