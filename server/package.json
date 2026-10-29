@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "NODE_ENV=test EXECUTION_PROVIDER=local tsx --test tests/**/*.test.ts",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit"
   },

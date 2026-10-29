@@ -14,7 +14,7 @@ export interface MemorySubmission {
   username: string;
   problemSlug?: string;
   language: string;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit';
+  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit' | 'judge_error';
   passedCount: number;
   totalCount: number;
   executionTimeMs: number;
@@ -134,7 +134,16 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
     // If no test cases exist, execute single run
     if (allProblemCases.length === 0) {
       const singleRun = await executeCode({ code, language });
-      const verdict = singleRun.status === 'success' ? 'accepted' : singleRun.status === 'compile_error' ? 'compile_error' : 'runtime_error';
+      const verdict =
+        singleRun.status === 'success'
+          ? 'accepted'
+          : singleRun.status === 'compile_error'
+          ? 'compile_error'
+          : singleRun.status === 'timeout'
+          ? 'time_limit'
+          : singleRun.status === 'judge_error' || singleRun.status === 'unavailable'
+          ? 'judge_error'
+          : 'runtime_error';
       return sendSuccess(res, {
         submissionId: randomUUID(),
         verdict,
@@ -161,6 +170,8 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
         ? 'time_limit'
         : evaluation.status === 'runtime_error'
         ? 'runtime_error'
+        : evaluation.status === 'judge_error'
+        ? 'judge_error'
         : evaluation.allPassed
         ? 'accepted'
         : 'wrong_answer';

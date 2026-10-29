@@ -58,6 +58,14 @@ export interface Problem {
   examples: Array<{ input: string; output: string; explanation?: string }>;
   testCases?: Array<{ input: string; expectedOutput: string; isHidden?: boolean }>;
   starterCode?: Record<string, string>;
+  judgeSpec?: {
+    mode: 'stdio' | 'function';
+    functionName?: string;
+    className?: string;
+    parameterTypes?: string[];
+    returnType?: string;
+    comparison: 'exact' | 'json' | 'numeric' | 'unordered_array';
+  };
 }
 
 // ─── Execution Types ────────────────────────────────────────
@@ -67,7 +75,7 @@ export interface ExecutionResult {
   stderr: string;
   exitCode: number;
   executionTimeMs: number;
-  status: 'success' | 'error' | 'timeout' | 'compile_error' | 'unavailable';
+  status: 'success' | 'error' | 'timeout' | 'compile_error' | 'unavailable' | 'judge_error';
 }
 
 export interface TestCaseEvaluation {
@@ -77,7 +85,7 @@ export interface TestCaseEvaluation {
   actualOutput: string;
   userStdout?: string;
   passed: boolean;
-  status: 'passed' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout';
+  status: 'passed' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error';
   executionTimeMs: number;
   stderr?: string;
   errorMessage?: string;
@@ -87,7 +95,7 @@ export interface TestSuiteEvaluationResult {
   allPassed: boolean;
   totalCases: number;
   passedCases: number;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout';
+  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error';
   testResults: TestCaseEvaluation[];
   totalTimeMs: number;
   compilerError?: string;
@@ -112,7 +120,7 @@ export interface WorkspaceStatus {
   isShared: boolean;
   language: string;
   isRunning: boolean;
-  lastVerdict: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | null;
+  lastVerdict: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error' | null;
   allowedWriters?: string[];
 }
 

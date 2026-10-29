@@ -228,10 +228,14 @@ npm run build
 ### Sandboxed Code Execution (`/api/execution`)
 - `POST /api/execution/run` — Run code in isolated runtime (`code`, `language`, `stdin`)
 - `POST /api/execution/submit` — Submit solution against problem test suite (`code`, `language`, `roomId`, `problemId`)
+- `POST /api/execution/test` — Run visible tests only
 
 ### Problems (`/api/problems`)
 - `GET /api/problems` — List practice problems (Optional query: `?difficulty=easy`)
 - `GET /api/problems/:slug` — Retrieve problem details, examples, and starter code
+- `GET /api/problems/audit` — Report judge-data and harness compatibility for every saved problem
+
+Production execution uses Judge0 by default. Configure `EXECUTION_PROVIDER=judge0`, `JUDGE0_URL`, and (when required by the deployment) `JUDGE0_API_KEY` on the server only. Provider outages return `Judge Error`; they are never converted into Accepted or Wrong Answer. The local runner is available only for explicit development/test configuration (`EXECUTION_PROVIDER=local`) and is not a production sandbox.
 
 ---
 

@@ -129,6 +129,7 @@ export function RoomPage() {
   const [chatInput, setChatInput] = useState('');
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<any>(null);
+  const executionRequestRef = useRef(0);
 
   // 1. Initial Room & Problem Load
   useEffect(() => {
@@ -490,6 +491,7 @@ export function RoomPage() {
   const handleRunSampleTests = async (customInputOverride?: string) => {
     if (!myCode.trim()) return;
 
+    const requestId = ++executionRequestRef.current;
     setRunning(true);
     const socket = getSocket();
     if (socket && roomId) {
@@ -510,9 +512,10 @@ export function RoomPage() {
         testCases: testCasesToRun,
       });
 
+      if (requestId !== executionRequestRef.current) return;
       setTestSuiteResult(evalResult);
 
-      if (socket && roomId) {
+      if (requestId === executionRequestRef.current && socket && roomId) {
         socket.emit('workspace:running', {
           roomId,
           isRunning: false,
@@ -521,7 +524,7 @@ export function RoomPage() {
       }
     } catch (err: any) {
       console.error('Test run failed:', err);
-      if (socket && roomId) {
+      if (requestId === executionRequestRef.current && socket && roomId) {
         socket.emit('workspace:running', {
           roomId,
           isRunning: false,
@@ -537,6 +540,7 @@ export function RoomPage() {
   const handleSubmitSolution = async () => {
     if (!myCode.trim() || !roomId) return;
 
+    const requestId = ++executionRequestRef.current;
     setSubmitting(true);
     const socket = getSocket();
     if (socket && roomId) {
@@ -551,12 +555,13 @@ export function RoomPage() {
         problemSlug: problem?.slug,
       });
 
+      if (requestId !== executionRequestRef.current) return;
       setSubmissionResult(response);
 
       // Refresh submissions history
       executionService.getSubmissions(roomId).then(setSubmissionHistory).catch(() => {});
 
-      if (socket && roomId) {
+      if (requestId === executionRequestRef.current && socket && roomId) {
         socket.emit('workspace:running', {
           roomId,
           isRunning: false,
@@ -565,7 +570,7 @@ export function RoomPage() {
       }
     } catch (err: any) {
       console.error('Submission failed:', err);
-      if (socket && roomId) {
+      if (requestId === executionRequestRef.current && socket && roomId) {
         socket.emit('workspace:running', {
           roomId,
           isRunning: false,
@@ -581,6 +586,7 @@ export function RoomPage() {
   const handleRunCode = async () => {
     if (!myCode.trim()) return;
 
+    const requestId = ++executionRequestRef.current;
     setRunning(true);
     try {
       const result = await executionService.runCode({
@@ -589,7 +595,7 @@ export function RoomPage() {
         stdin: customInput.trim() || undefined,
         roomId,
       });
-      setExecutionResult(result);
+      if (requestId === executionRequestRef.current) setExecutionResult(result);
     } catch (err: any) {
       setExecutionResult({
         stdout: '',

@@ -6,7 +6,7 @@ export interface ISubmission extends Document {
   problemId?: mongoose.Types.ObjectId;
   language: string;
   code: string;
-  status: 'pending' | 'running' | 'accepted' | 'wrong_answer' | 'time_limit' | 'runtime_error' | 'compile_error';
+  status: 'pending' | 'running' | 'accepted' | 'wrong_answer' | 'time_limit' | 'runtime_error' | 'compile_error' | 'judge_error';
   output?: string;
   error?: string;
   executionTimeMs?: number;
@@ -24,7 +24,7 @@ const submissionSchema = new Schema<ISubmission>(
     code: { type: String, required: true },
     status: {
       type: String,
-      enum: ['pending', 'running', 'accepted', 'wrong_answer', 'time_limit', 'runtime_error', 'compile_error'],
+      enum: ['pending', 'running', 'accepted', 'wrong_answer', 'time_limit', 'runtime_error', 'compile_error', 'judge_error'],
       default: 'pending',
     },
     output: String,
