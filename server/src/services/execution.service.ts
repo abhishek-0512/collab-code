@@ -88,6 +88,19 @@ const LANGUAGE_CONFIG: Record<string, { language: string; version: string }> = {
   rust: { language: 'rust', version: '1.50.0' },
 };
 
+// Judge0 CE language IDs (https://ce.judge0.com)
+const JUDGE0_LANGUAGE_IDS: Record<string, number> = {
+  java: 91,       // Java (JDK 17.0.6)
+  python: 92,     // Python (3.11.2)
+  javascript: 93, // JavaScript (Node.js 18.15.0)
+  typescript: 94, // TypeScript (5.0.3)
+  cpp: 105,       // C++ (GCC 14.1.0)
+  go: 60,         // Go (1.13.5)
+  rust: 73,       // Rust (1.40.0)
+};
+
+const JUDGE0_CE_URL = 'https://ce.judge0.com';
+
 const MAX_OUTPUT_BYTES = 512 * 1024; // 512 KB output limit protection
 
 /**
@@ -589,7 +602,8 @@ export async function executeLocally(req: ExecutionRequest): Promise<ExecutionRe
 
 /**
  * Top-level Code Execution entry point.
- * Directs execution to local hardened sandbox engine or self-hosted Piston sandbox.
+ * In production (no local javac/g++), routes to Judge0 CE cloud sandbox.
+ * Falls back to local sandbox for local dev when compilers are available.
  */
 export async function executeCode(req: ExecutionRequest): Promise<ExecutionResult> {
   const langConfig = LANGUAGE_CONFIG[req.language.toLowerCase()];
@@ -603,81 +617,125 @@ export async function executeCode(req: ExecutionRequest): Promise<ExecutionResul
     };
   }
 
-  const pistonUrl = env.PISTON_URL || '';
+  // In production (Render/cloud), use Judge0 CE as the execution backend.
+  // Locally, fall back to spawning compilers directly.
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (isProduction) {
+    return executeViaJudge0(req);
+  }
 
-  // If PISTON_URL is the public emkc.org (which requires whitelist) or empty, use local sandbox directly
-  if (!pistonUrl || pistonUrl.includes('emkc.org')) {
+  return executeLocally(req);
+}
+
+/**
+ * Executes code via Judge0 CE public API (https://ce.judge0.com).
+ * Free, no auth required, supports Java 17, Python 3.11, Node 18, C++ GCC 14, TypeScript 5.
+ */
+async function executeViaJudge0(req: ExecutionRequest): Promise<ExecutionResult> {
+  const lang = req.language.toLowerCase();
+  const languageId = JUDGE0_LANGUAGE_IDS[lang];
+  const startTime = Date.now();
+
+  if (!languageId) {
     return executeLocally(req);
   }
 
-  const startTime = Date.now();
-
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-    const response = await fetch(`${pistonUrl}/execute`, {
+    const response = await fetch(`${JUDGE0_CE_URL}/submissions?base64_encoded=false&wait=true`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        language: langConfig.language,
-        version: langConfig.version,
-        files: [{ content: req.code }],
+        language_id: languageId,
+        source_code: req.code,
         stdin: req.stdin || '',
-        run_timeout: req.timeoutMs || 10000,
-        compile_timeout: 15000,
+        cpu_time_limit: Math.ceil((req.timeoutMs || 10000) / 1000),
+        wall_time_limit: Math.ceil((req.timeoutMs || 10000) / 1000) + 5,
+        memory_limit: 256000, // 256 MB
       }),
       signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
+    const duration = Date.now() - startTime;
 
     if (!response.ok) {
+      console.error(`[Judge0] API error: ${response.status} ${response.statusText}`);
       return executeLocally(req);
     }
 
     const data = (await response.json()) as {
-      run: { stdout?: string; stderr?: string; code?: number; signal?: string };
-      compile?: { stdout?: string; stderr?: string; code?: number };
+      stdout?: string;
+      stderr?: string;
+      compile_output?: string;
+      message?: string;
+      time?: string;
+      memory?: number;
+      status?: { id: number; description: string };
     };
 
-    const duration = Date.now() - startTime;
+    const statusId = data.status?.id ?? 0;
+    const stdout = data.stdout || '';
+    const stderr = data.stderr || data.message || '';
+    const compileOutput = data.compile_output || '';
 
-    if (data.compile && data.compile.code !== 0 && data.compile.code !== undefined) {
+    // Status IDs: 1=In Queue, 2=Processing, 3=Accepted, 4=WA, 5=TLE, 6=CE, 7-12=Runtime errors, 13=Internal error, 14=Exec format error
+    if (statusId === 6) {
+      // Compilation Error
       return {
-        stdout: data.compile.stdout || '',
-        stderr: data.compile.stderr || 'Compilation error',
-        exitCode: data.compile.code,
+        stdout: '',
+        stderr: compileOutput || stderr || 'Compilation error',
+        exitCode: 1,
         executionTimeMs: duration,
         status: 'compile_error',
       };
     }
 
-    const run = data.run || {};
-    const stdout = run.stdout || '';
-    const stderr = run.stderr || '';
-    const exitCode = run.code ?? 0;
-
-    if (run.signal === 'SIGKILL' || run.signal === 'SIGTERM') {
+    if (statusId === 5) {
+      // Time Limit Exceeded
       return {
         stdout,
-        stderr: stderr || 'Execution timed out (Time Limit Exceeded).',
+        stderr: 'Execution timed out (Time Limit Exceeded).',
         exitCode: 137,
         executionTimeMs: duration,
         status: 'timeout',
       };
     }
 
+    if (statusId >= 7 && statusId <= 12) {
+      // Runtime errors (SIGSEGV, SIGFPE, SIGABRT, NZEC, etc.)
+      return {
+        stdout,
+        stderr: stderr || `Runtime Error (${data.status?.description || 'unknown'})`,
+        exitCode: 1,
+        executionTimeMs: duration,
+        status: 'error',
+      };
+    }
+
+    if (statusId === 3) {
+      // Accepted
+      return {
+        stdout,
+        stderr,
+        exitCode: 0,
+        executionTimeMs: duration,
+        status: 'success',
+      };
+    }
+
+    // Other statuses (in queue, processing, internal error)
     return {
       stdout,
-      stderr,
-      exitCode,
+      stderr: stderr || data.message || `Judge status: ${data.status?.description || statusId}`,
+      exitCode: statusId === 3 ? 0 : 1,
       executionTimeMs: duration,
-      status: exitCode === 0 ? 'success' : 'error',
+      status: statusId === 3 ? 'success' : 'error',
     };
-  } catch {
+  } catch (err) {
+    console.error('[Judge0] Request failed, falling back to local:', err);
     return executeLocally(req);
   }
 }
@@ -1779,7 +1837,7 @@ export async function evaluateTestCases(
   // We can verify compilation immediately with a sample harness test
   if (lang === 'cpp' || lang === 'c++' || lang === 'java') {
     const probe = buildTestHarness(code, language, testCases[0]?.input || '', problemSlug);
-    const compileCheck = await executeLocally({
+    const compileCheck = await executeCode({
       code: probe.code,
       language,
       stdin: probe.stdin,
