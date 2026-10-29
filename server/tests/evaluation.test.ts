@@ -166,6 +166,29 @@ class Solution {
     assert.strictEqual(result.allPassed, true);
   });
 
+  it('evaluateTestCases should support Java in-place char[] reverseString', async () => {
+    const javaCode = `
+class Solution {
+    public void reverseString(char[] s) {
+        int i = 0, j = s.length - 1;
+        while (i < j) {
+            char temp = s[i];
+            s[i] = s[j];
+            s[j] = temp;
+            i++;
+            j--;
+        }
+    }
+}
+`;
+    const result = await evaluateTestCases(javaCode, 'java', [
+      { input: 'hello', expectedOutput: 'olleh' },
+      { input: 'algorithm', expectedOutput: 'mhtirogla' },
+    ], 'reverse-string');
+    assert.strictEqual(result.status, 'accepted');
+    assert.strictEqual(result.allPassed, true);
+  });
+
   it('evaluateTestCases should pass custom input without expected output', async () => {
     const pyCode = `
 def two_sum(nums, target):

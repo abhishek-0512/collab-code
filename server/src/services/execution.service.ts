@@ -927,12 +927,15 @@ int main() {
         System.out.println("__LEETCODE_RESULT__:" + Arrays.toString(res).replace(" ", ""));
       `;
     } else if (prob === 'reverse-string') {
+      const usesCharArray = /reverseString\s*\(\s*char\s*\[\s*\]/.test(code);
       runnerBody = `
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         String s = reader.readLine();
         if (s == null) return;
         Solution sol = new Solution();
-        String res = sol.reverseString(s);
+        ${usesCharArray
+          ? 'char[] chars = s.toCharArray();\n        sol.reverseString(chars);\n        String res = new String(chars);'
+          : 'String res = sol.reverseString(s);'}
         System.out.println("__LEETCODE_RESULT__:\\"" + res + "\\"");
       `;
     } else if (prob === 'binary-search') {
