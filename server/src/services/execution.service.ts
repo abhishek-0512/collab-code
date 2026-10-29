@@ -84,8 +84,24 @@ async function executeLocally(req: ExecutionRequest): Promise<ExecutionResult> {
     } else if (lang === 'java') {
       filePath = path.join(tempDir, 'Main.java');
       await fs.writeFile(filePath, req.code, 'utf-8');
+      const compileRes = await new Promise<{ exitCode: number; stderr: string }>((resolve) => {
+        const cp = spawn('javac', [filePath], { cwd: tempDir });
+        let err = '';
+        cp.stderr.on('data', (d) => (err += d.toString()));
+        cp.on('error', (error) => resolve({ exitCode: 127, stderr: error.message }));
+        cp.on('close', (code) => resolve({ exitCode: code ?? 1, stderr: err }));
+      });
+      if (compileRes.exitCode !== 0) {
+        return {
+          stdout: '',
+          stderr: compileRes.stderr || 'Compilation failed',
+          exitCode: compileRes.exitCode,
+          executionTimeMs: Date.now() - startTime,
+          status: 'compile_error',
+        };
+      }
       command = 'java';
-      args = [filePath];
+      args = ['-cp', tempDir, 'Main'];
     } else {
       return {
         stdout: '',
