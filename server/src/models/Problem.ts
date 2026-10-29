@@ -6,6 +6,15 @@ export interface ITestCase {
   isHidden: boolean;
 }
 
+export interface IProblemJudgeSpec {
+  mode: 'stdio' | 'function';
+  functionName?: string;
+  className?: string;
+  parameterTypes?: string[];
+  returnType?: string;
+  comparison: 'exact' | 'json' | 'numeric' | 'unordered_array';
+}
+
 export interface IProblem extends Document {
   slug: string;
   title: string;
@@ -16,6 +25,7 @@ export interface IProblem extends Document {
   examples: Array<{ input: string; output: string; explanation?: string }>;
   testCases: ITestCase[];
   starterCode: Record<string, string>;
+  judgeSpec?: IProblemJudgeSpec;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +53,18 @@ const problemSchema = new Schema<IProblem>(
       },
     ],
     starterCode: { type: Map, of: String, default: {} },
+    judgeSpec: {
+      mode: { type: String, enum: ['stdio', 'function'], default: 'function' },
+      functionName: String,
+      className: String,
+      parameterTypes: [String],
+      returnType: String,
+      comparison: {
+        type: String,
+        enum: ['exact', 'json', 'numeric', 'unordered_array'],
+        default: 'json',
+      },
+    },
   },
   { timestamps: true }
 );

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { Problem, IProblem } from '../models/Problem';
+import { Problem, IProblem, IProblemJudgeSpec } from '../models/Problem';
 
 export const DEFAULT_PROBLEMS = [
   {
@@ -92,6 +92,14 @@ vector<int> twoSum(vector<int>& nums, int target) {
 }
 `,
     },
+    judgeSpec: {
+      mode: 'function',
+      functionName: 'twoSum',
+      className: 'Solution',
+      parameterTypes: ['int[]', 'int'],
+      returnType: 'int[]',
+      comparison: 'unordered_array',
+    },
   },
   {
     slug: 'reverse-string',
@@ -140,6 +148,14 @@ string reverseString(string s) {
     return s;
 }
 `,
+    },
+    judgeSpec: {
+      mode: 'function',
+      functionName: 'reverseString',
+      className: 'Solution',
+      parameterTypes: ['String'],
+      returnType: 'String',
+      comparison: 'exact',
     },
   },
   {
@@ -221,6 +237,14 @@ int search(vector<int>& nums, int target) {
     return -1;
 }
 `,
+    },
+    judgeSpec: {
+      mode: 'function',
+      functionName: 'search',
+      className: 'Solution',
+      parameterTypes: ['int[]', 'int'],
+      returnType: 'int',
+      comparison: 'numeric',
     },
   },
   {
@@ -311,6 +335,14 @@ bool isValid(string s) {
 }
 `,
     },
+    judgeSpec: {
+      mode: 'function',
+      functionName: 'isValid',
+      className: 'Solution',
+      parameterTypes: ['String'],
+      returnType: 'boolean',
+      comparison: 'exact',
+    },
   },
   {
     slug: 'maximum-subarray',
@@ -387,6 +419,14 @@ int maxSubArray(vector<int>& nums) {
 }
 `,
     },
+    judgeSpec: {
+      mode: 'function',
+      functionName: 'maxSubArray',
+      className: 'Solution',
+      parameterTypes: ['int[]'],
+      returnType: 'int',
+      comparison: 'numeric',
+    },
   },
 ];
 
@@ -430,6 +470,7 @@ export async function createProblem(data: {
   examples?: Array<{ input: string; output: string; explanation?: string }>;
   testCases?: Array<{ input: string; expectedOutput: string; isHidden?: boolean }>;
   starterCode?: Record<string, string>;
+  judgeSpec?: IProblemJudgeSpec;
 }) {
   const slug =
     data.title
@@ -463,6 +504,7 @@ export async function createProblem(data: {
       examples,
       testCases,
       starterCode,
+      judgeSpec: data.judgeSpec,
     });
     return problem;
   }
@@ -481,9 +523,41 @@ export async function createProblem(data: {
     examples,
     testCases,
     starterCode,
+    judgeSpec: data.judgeSpec,
   };
   DEFAULT_PROBLEMS.push(customProblem as any);
   return customProblem;
+}
+
+export async function auditProblems() {
+  const problems = await getProblems();
+  return problems.map((problem: any) => {
+    const testCases = Array.isArray(problem.testCases) ? problem.testCases : [];
+    const starterCode = problem.starterCode instanceof Map
+      ? Object.fromEntries(problem.starterCode.entries())
+      : problem.starterCode || {};
+    const languages = Object.keys(starterCode);
+    const reasons: string[] = [];
+    if (!problem.judgeSpec) reasons.push('missing judge specification');
+    if (testCases.length === 0) reasons.push('no test cases configured');
+    if (testCases.some((tc: any) => typeof tc.input !== 'string' || typeof tc.expectedOutput !== 'string')) {
+      reasons.push('invalid test case shape');
+    }
+    if (languages.length === 0) reasons.push('no starter code/languages configured');
+    return {
+      questionId: problem._id?.toString?.() || problem.slug,
+      slug: problem.slug,
+      title: problem.title,
+      problemType: problem.judgeSpec?.mode || 'unknown',
+      supportedLanguages: languages,
+      visibleTests: testCases.filter((tc: any) => !tc.isHidden).length,
+      hiddenTests: testCases.filter((tc: any) => tc.isHidden).length,
+      harnessStatus: problem.judgeSpec ? 'configured' : 'missing',
+      testDataValid: reasons.every((reason) => !reason.includes('test')),
+      judgeCompatibility: reasons.length === 0 ? 'supported' : 'requires_judge_data_repair',
+      reasons,
+    };
+  });
 }
 
 export async function seedProblems(): Promise<void> {

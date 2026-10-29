@@ -23,7 +23,7 @@ export async function getProblem(req: Request, res: Response): Promise<void> {
 
 export async function createProblem(req: Request, res: Response): Promise<void> {
   try {
-    const { title, description, difficulty, tags, constraints, examples, starterCode } = req.body;
+    const { title, description, difficulty, tags, constraints, examples, starterCode, testCases, judgeSpec } = req.body;
     if (!title || !description) {
       sendError(res, 'Title and description are required', 422);
       return;
@@ -36,9 +36,19 @@ export async function createProblem(req: Request, res: Response): Promise<void> 
       constraints,
       examples,
       starterCode,
+      testCases,
+      judgeSpec,
     });
     sendSuccess(res, problem, 'Problem created successfully', 201);
   } catch (err) {
     sendError(res, err instanceof Error ? err.message : 'Failed to create problem', 500);
+  }
+}
+
+export async function auditProblems(_req: Request, res: Response): Promise<void> {
+  try {
+    sendSuccess(res, await problemService.auditProblems());
+  } catch (err) {
+    sendError(res, err instanceof Error ? err.message : 'Failed to audit problems', 500);
   }
 }

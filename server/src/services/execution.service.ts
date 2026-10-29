@@ -17,7 +17,8 @@ export interface ExecutionResult {
   stderr: string;
   exitCode: number;
   executionTimeMs: number;
-  status: 'success' | 'error' | 'timeout' | 'compile_error' | 'unavailable';
+  status: 'success' | 'error' | 'timeout' | 'compile_error' | 'unavailable' | 'judge_error';
+  memoryKb?: number;
 }
 
 const LANGUAGE_CONFIG: Record<string, { language: string; version: string }> = {
@@ -28,6 +29,16 @@ const LANGUAGE_CONFIG: Record<string, { language: string; version: string }> = {
   cpp: { language: 'c++', version: '10.2.0' },
   go: { language: 'go', version: '1.16.2' },
   rust: { language: 'rust', version: '1.50.0' },
+};
+
+const JUDGE0_LANGUAGE_IDS: Record<string, number> = {
+  javascript: 63,
+  typescript: 74,
+  python: 71,
+  java: 62,
+  cpp: 54,
+  go: 60,
+  rust: 73,
 };
 
 /**
@@ -74,9 +85,10 @@ async function executeLocally(req: ExecutionRequest): Promise<ExecutionResult> {
       await fs.writeFile(srcPath, req.code, 'utf-8');
 
       const compileRes = await new Promise<{ exitCode: number; stderr: string }>((resolve) => {
-        const cp = spawn('clang++', ['-std=c++17', srcPath, '-o', binPath]);
+        const cp = spawn('g++', ['-std=c++17', srcPath, '-o', binPath]);
         let err = '';
         cp.stderr.on('data', (d) => (err += d.toString()));
+        cp.on('error', (error) => resolve({ exitCode: 127, stderr: error.message }));
         cp.on('close', (code) => resolve({ exitCode: code ?? 1, stderr: err }));
       });
 
@@ -86,7 +98,7 @@ async function executeLocally(req: ExecutionRequest): Promise<ExecutionResult> {
           stderr: compileRes.stderr || 'Compilation failed',
           exitCode: compileRes.exitCode,
           executionTimeMs: Date.now() - startTime,
-          status: 'compile_error',
+          status: compileRes.exitCode === 127 ? 'unavailable' : 'compile_error',
         };
       }
       command = binPath;
@@ -187,7 +199,7 @@ async function executeLocally(req: ExecutionRequest): Promise<ExecutionResult> {
       stderr: err.message || 'Execution failed',
       exitCode: 1,
       executionTimeMs: Date.now() - startTime,
-      status: 'error',
+      status: err?.code === 'ENOENT' ? 'unavailable' : 'error',
     };
   } finally {
     fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
@@ -213,13 +225,94 @@ export async function executeCode(req: ExecutionRequest): Promise<ExecutionResul
     };
   }
 
-  const pistonUrl = env.PISTON_URL || '';
-
-  // If PISTON_URL is the public emkc.org (which requires whitelist) or empty, use local sandbox directly
-  if (!pistonUrl || pistonUrl.includes('emkc.org')) {
+  if (env.EXECUTION_PROVIDER === 'local') {
     return executeLocally(req);
   }
 
+  if (env.EXECUTION_PROVIDER === 'judge0') {
+    return executeWithJudge0(req, langConfig.language);
+  }
+
+  if (env.EXECUTION_PROVIDER === 'piston' && env.PISTON_URL) {
+    return executeWithPiston(req, langConfig);
+  }
+
+  return {
+    stdout: '',
+    stderr: 'No execution provider is configured.',
+    exitCode: 1,
+    executionTimeMs: 0,
+    status: 'unavailable',
+  };
+}
+
+async function executeWithJudge0(req: ExecutionRequest, _language: string): Promise<ExecutionResult> {
+  const languageId = JUDGE0_LANGUAGE_IDS[req.language.toLowerCase()];
+  if (!env.JUDGE0_URL || !languageId) {
+    return { stdout: '', stderr: 'Judge0 is not configured for this language.', exitCode: 1, executionTimeMs: 0, status: 'unavailable' };
+  }
+
+  const startTime = Date.now();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), (req.timeoutMs || 8000) + 10000);
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (env.JUDGE0_API_KEY) headers['X-Auth-Token'] = env.JUDGE0_API_KEY;
+    const response = await fetch(`${env.JUDGE0_URL.replace(/\/$/, '')}/submissions?wait=true`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        language_id: languageId,
+        source_code: req.code,
+        stdin: req.stdin || '',
+        cpu_time_limit: Math.min((req.timeoutMs || 8000) / 1000, 10),
+        wall_time_limit: Math.min(((req.timeoutMs || 8000) / 1000) + 2, 15),
+        memory_limit: 256000,
+        max_processes_and_or_threads: 20,
+        max_file_size: 1024,
+        enable_network: false,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return { stdout: '', stderr: `Judge0 rejected the request (${response.status}).`, exitCode: response.status, executionTimeMs: Date.now() - startTime, status: 'judge_error' };
+    }
+
+    const data = (await response.json()) as {
+      status?: { id?: number; description?: string };
+      stdout?: string;
+      stderr?: string;
+      compile_output?: string;
+      message?: string;
+      exit_code?: number;
+      time?: string;
+      memory?: number;
+    };
+    const statusId = data.status?.id;
+    const description = data.status?.description || '';
+    const stdout = data.stdout || '';
+    const stderr = data.stderr || data.compile_output || data.message || '';
+    const executionTimeMs = data.time ? Math.round(Number(data.time) * 1000) : Date.now() - startTime;
+    const base = { stdout, stderr: stderr || description, exitCode: data.exit_code ?? 1, executionTimeMs, memoryKb: data.memory };
+
+    if (statusId === 3) return { ...base, exitCode: data.exit_code ?? 0, status: 'success' };
+    if (statusId === 4) return { ...base, status: 'error' };
+    if (statusId === 5) return { ...base, status: 'timeout' };
+    if (statusId === 6) return { ...base, status: 'compile_error' };
+    if (statusId === 7 || statusId === 8 || statusId === 9) return { ...base, status: 'error' };
+    return { ...base, status: 'judge_error' };
+  } catch (error) {
+    return { stdout: '', stderr: error instanceof Error ? error.message : 'Judge0 request failed.', exitCode: 1, executionTimeMs: Date.now() - startTime, status: 'judge_error' };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function executeWithPiston(
+  req: ExecutionRequest,
+  langConfig: { language: string; version: string }
+): Promise<ExecutionResult> {
+  const pistonUrl = env.PISTON_URL;
   const startTime = Date.now();
 
   try {
@@ -245,8 +338,13 @@ export async function executeCode(req: ExecutionRequest): Promise<ExecutionResul
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      // Fallback to local sandbox if remote engine fails
-      return executeLocally(req);
+      return {
+        stdout: '',
+        stderr: `Execution provider rejected the request (${response.status}).`,
+        exitCode: response.status,
+        executionTimeMs: Date.now() - startTime,
+        status: 'judge_error',
+      };
     }
 
     const data = (await response.json()) as {
@@ -288,9 +386,14 @@ export async function executeCode(req: ExecutionRequest): Promise<ExecutionResul
       executionTimeMs: duration,
       status: exitCode === 0 ? 'success' : 'error',
     };
-  } catch {
-    // Graceful fallback to local sandbox
-    return executeLocally(req);
+  } catch (error) {
+    return {
+      stdout: '',
+      stderr: error instanceof Error ? error.message : 'Execution provider request failed.',
+      exitCode: 1,
+      executionTimeMs: Date.now() - startTime,
+      status: 'judge_error',
+    };
   }
 }
 
@@ -308,7 +411,7 @@ export interface TestCaseEvaluationItem {
   actualOutput: string;
   userStdout?: string;
   passed: boolean;
-  status: 'passed' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout';
+  status: 'passed' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error';
   executionTimeMs: number;
   stderr?: string;
   errorMessage?: string;
@@ -318,7 +421,7 @@ export interface TestSuiteEvaluationResult {
   allPassed: boolean;
   totalCases: number;
   passedCases: number;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout';
+  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error';
   testResults: TestCaseEvaluationItem[];
   totalTimeMs: number;
   compilerError?: string;
@@ -909,7 +1012,7 @@ export async function evaluateTestCases(
   const startTime = Date.now();
   const testResults: TestCaseEvaluationItem[] = [];
   let allPassed = true;
-  let overallStatus: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' = 'accepted';
+  let overallStatus: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error' = 'accepted';
   let topCompilerError: string | undefined;
   let topRuntimeError: string | undefined;
 
@@ -959,6 +1062,23 @@ export async function evaluateTestCases(
         errorMessage: 'Execution exceeded time limit (6000ms)',
       });
       continue;
+    }
+
+    if (execResult.status === 'unavailable' || execResult.status === 'judge_error') {
+      overallStatus = 'judge_error';
+      allPassed = false;
+      testResults.push({
+        index: i + 1,
+        input: tc.input,
+        expectedOutput: tc.expectedOutput,
+        actualOutput: 'Judge Error',
+        passed: false,
+        status: 'judge_error',
+        executionTimeMs: execResult.executionTimeMs,
+        stderr: execResult.stderr,
+        errorMessage: execResult.stderr || 'Execution provider unavailable',
+      });
+      break;
     }
 
     // 3. Runtime Error
