@@ -10,9 +10,9 @@ describe('WebRTC Live Voice Signaling & Routing', () => {
   let ioServer: Server;
   let httpServer: any;
   let serverPort: number;
-  let clientA: ClientSocket;
-  let clientB: ClientSocket;
-  let clientC: ClientSocket;
+  let clientA: ClientSocket | undefined;
+  let clientB: ClientSocket | undefined;
+  let clientC: ClientSocket | undefined;
 
   before(async () => {
     await new Promise<void>((resolve) => {
