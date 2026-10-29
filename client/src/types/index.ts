@@ -77,7 +77,7 @@ export interface TestCaseEvaluation {
   actualOutput: string;
   userStdout?: string;
   passed: boolean;
-  status: 'passed' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout';
+  status: 'passed' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'output_limit' | 'judge_error' | 'executed';
   executionTimeMs: number;
   stderr?: string;
   errorMessage?: string;
@@ -87,7 +87,7 @@ export interface TestSuiteEvaluationResult {
   allPassed: boolean;
   totalCases: number;
   passedCases: number;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout';
+  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit' | 'output_limit' | 'judge_error' | 'executed' | 'timeout';
   testResults: TestCaseEvaluation[];
   totalTimeMs: number;
   compilerError?: string;

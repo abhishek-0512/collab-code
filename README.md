@@ -282,6 +282,103 @@ docker-compose down -v
 
 ---
 
+## Docker-Based Code Execution Engine
+
+Collab Code includes a Docker-based sandboxed execution engine that isolates user code from the host system.
+
+### Prerequisites
+
+- **Docker Desktop** (macOS) or Docker Engine (Linux) — must be running
+- Image `collab-code-runner:local` built from `execution-worker/Dockerfile`
+
+### Build the Execution Image
+
+```bash
+# From the repository root
+docker build -t collab-code-runner:local ./execution-worker
+```
+
+### Enable Docker Execution
+
+Set the environment variable before starting the backend:
+
+```bash
+# Enable Docker-based sandbox
+export DOCKER_EXECUTION=true
+
+# Optional: use a custom image tag
+export DOCKER_EXECUTION_IMAGE=collab-code-runner:local
+
+# Start the server
+cd server && npm run dev
+```
+
+Or add to your `.env` file (do **not** commit secrets):
+```
+DOCKER_EXECUTION=true
+DOCKER_EXECUTION_IMAGE=collab-code-runner:local
+```
+
+When `DOCKER_EXECUTION` is unset or `false`, the server falls back to the local process-based sandbox (no Docker required).
+
+### Running Tests
+
+```bash
+# Backend unit + integration tests (86 tests, ~13 s)
+cd server && npm test
+
+# TypeScript type check
+cd server && npm run typecheck
+
+# Docker language smoke tests (23 tests — requires Docker + image)
+DOCKER_EXECUTION=true npx tsx server/scripts/docker-smoke-test.ts
+
+# Docker safety / resource-limit tests (3 tests)
+DOCKER_EXECUTION=true npx tsx server/scripts/docker-safety-test.ts
+```
+
+### Supported Languages
+
+| Language   | Runtime / Tool        | Notes                                      |
+|------------|-----------------------|--------------------------------------------|
+| JavaScript | Node.js 22            | Syntax pre-check via `node --check`        |
+| TypeScript | tsx (transpile-only)  | Type errors require separate `tsc --noEmit`|
+| Python     | Python 3 (`python3`)  | Syntax check via `py_compile -B`           |
+| Java       | OpenJDK 17 (`javac`)  | Two-stage: compile then run                |
+| C++        | GCC/g++ C++17         | Two-stage: compile then run                |
+
+### Container Resource Limits
+
+| Limit              | Value           |
+|--------------------|-----------------|
+| Memory             | 256 MB          |
+| Memory + swap      | 256 MB (no swap)|
+| CPU                | 1 vCPU          |
+| PID limit          | 64              |
+| Open files (nofile)| 128             |
+| tmpfs `/tmp`       | 32 MB           |
+| Network            | Disabled        |
+| Capabilities       | All dropped     |
+| New privileges     | Blocked         |
+| Run as user        | UID 10001       |
+| Combined output    | 512 KB          |
+| Default timeout    | 8 s execution + 12 s compile |
+
+### Known Limitations
+
+- **TypeScript type errors** are not caught at runtime; tsx transpiles them silently.
+  Use `tsc --noEmit` in CI for type checking.
+- **Docker isolation is suitable for trusted/classroom use.** For public multi-tenant
+  production, add gVisor (`runsc`), seccomp/AppArmor profiles, per-user rate limits,
+  and a dedicated Docker daemon per tenant.
+- The Docker socket is never exposed inside containers.
+- Compiled artefacts (`.class` files, C++ binaries) are written to the temporary
+  workspace directory and cleaned up after each execution.
+- Missing Docker daemon or missing image returns a clear `unavailable` / `error`
+  status with a diagnostic message — it does not crash the API.
+
+---
+
 ## Architecture Decision Records (ADRs)
 
 - [ADR 001: Collaborative Editing via CRDT (Yjs)](docs/adr/001-collaborative-editing-crdt.md)

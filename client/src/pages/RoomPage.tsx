@@ -66,7 +66,7 @@ const SUPPORTED_LANGUAGES: Array<{ value: Language; label: string }> = [
 
 export function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuthStore();
 
@@ -130,6 +130,36 @@ export function RoomPage() {
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<any>(null);
 
+  // LeetCode Import State
+  const [importInput, setImportInput] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+
+  const handleImportLeetCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = importInput.trim();
+    if (!query) return;
+    setIsImporting(true);
+    setImportError('');
+    try {
+      const fetched = await problemService.getProblem(query);
+      if (fetched) {
+        setAllProblems((prev) => (prev.find((x) => x.slug === fetched.slug) ? prev : [fetched, ...prev]));
+        setProblem(fetched);
+        if (fetched.starterCode) {
+          const starter = fetched.starterCode[myLanguage] || fetched.starterCode.javascript || '';
+          setMyCode(starter);
+        }
+        setImportInput('');
+        setSearchParams({ problem: fetched.slug });
+      }
+    } catch (err: any) {
+      setImportError(err.response?.data?.error || err.message || 'Failed to import LeetCode problem');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   // 1. Initial Room & Problem Load
   useEffect(() => {
     if (!roomId) return;
@@ -157,18 +187,28 @@ export function RoomPage() {
     const problemSlug = searchParams.get('problem');
     problemService
       .getProblems()
-      .then((list) => {
+      .then(async (list) => {
         if (!mounted) return;
         setAllProblems(list);
         let selectedProblem: Problem | null = null;
         if (problemSlug) {
           selectedProblem = list.find((p) => p.slug === problemSlug) || null;
+          if (!selectedProblem) {
+            try {
+              selectedProblem = await problemService.getProblem(problemSlug);
+              if (selectedProblem && mounted) {
+                setAllProblems((prev) => (prev.find((x) => x.slug === selectedProblem!.slug) ? prev : [selectedProblem!, ...prev]));
+              }
+            } catch {
+              selectedProblem = null;
+            }
+          }
         }
         if (!selectedProblem && list.length > 0) {
           selectedProblem = list[0];
         }
 
-        if (selectedProblem) {
+        if (selectedProblem && mounted) {
           setProblem(selectedProblem);
           // Initialize starter template if code is empty
           if (!myCode && selectedProblem.starterCode) {
@@ -521,6 +561,16 @@ export function RoomPage() {
       }
     } catch (err: any) {
       console.error('Test run failed:', err);
+      const errMsg = err.response?.data?.error || err.message || 'Execution failed';
+      setTestSuiteResult({
+        allPassed: false,
+        totalCases: 0,
+        passedCases: 0,
+        status: 'judge_error',
+        totalTimeMs: 0,
+        compilerError: errMsg,
+        testResults: [],
+      });
       if (socket && roomId) {
         socket.emit('workspace:running', {
           roomId,
@@ -565,6 +615,16 @@ export function RoomPage() {
       }
     } catch (err: any) {
       console.error('Submission failed:', err);
+      const errMsg = err.response?.data?.error || err.message || 'Submission failed';
+      setTestSuiteResult({
+        allPassed: false,
+        totalCases: 0,
+        passedCases: 0,
+        status: 'judge_error',
+        totalTimeMs: 0,
+        compilerError: errMsg,
+        testResults: [],
+      });
       if (socket && roomId) {
         socket.emit('workspace:running', {
           roomId,
@@ -787,6 +847,29 @@ export function RoomPage() {
                   ✕
                 </button>
               </div>
+
+              {/* Import any LeetCode Problem */}
+              <form onSubmit={handleImportLeetCode} className="px-3 py-2 border-b border-slate-800 bg-slate-950/60 flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="Paste LeetCode URL or slug (e.g. 3sum)"
+                    value={importInput}
+                    onChange={(e) => setImportInput(e.target.value)}
+                    className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isImporting || !importInput.trim()}
+                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-[11px] font-medium text-white rounded transition-colors shrink-0 cursor-pointer"
+                  >
+                    {isImporting ? '...' : 'Import'}
+                  </button>
+                </div>
+                {importError && (
+                  <div className="text-[10px] text-rose-400 font-sans">{importError}</div>
+                )}
+              </form>
 
               <div className="flex-1 overflow-auto p-4 text-xs leading-relaxed text-slate-300 flex flex-col gap-4">
                 {problem ? (

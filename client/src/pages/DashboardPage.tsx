@@ -84,10 +84,18 @@ export function DashboardPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!createForm.name.trim()) {
+      setError('Room name is required');
+      return;
+    }
     setError('');
     setCreating(true);
     try {
-      const room = await roomService.createRoom(createForm);
+      const room = await roomService.createRoom({
+        ...createForm,
+        name: createForm.name.trim(),
+        description: createForm.description.trim() || undefined,
+      });
       navigate(`/room/${room.roomId}`);
     } catch (err: any) {
       setError(err?.response?.data?.error || err.message || 'Failed to create room');
@@ -155,14 +163,14 @@ export function DashboardPage() {
   const startProblemRoom = async (p: Problem) => {
     try {
       const room = await roomService.createRoom({
-        name: `${p.title} Session`,
+        name: `${p.title.slice(0, 65)} Session`,
         description: `Solving problem: ${p.title}`,
         language: 'javascript',
         isPrivate: true,
       });
       navigate(`/room/${room.roomId}?problem=${p.slug}`);
     } catch (err: any) {
-      alert(err?.message || 'Failed to initialize session');
+      alert(err?.response?.data?.error || err?.message || 'Failed to initialize session');
     }
   };
 

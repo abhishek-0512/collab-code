@@ -149,8 +149,12 @@ export function ProblemAndTestCasesPanel({
                 className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold uppercase ${
                   testSuiteResult.status === 'accepted'
                     ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60'
+                    : testSuiteResult.status === 'executed'
+                    ? 'bg-indigo-950 text-indigo-300 border border-indigo-800/60'
                     : testSuiteResult.status === 'compile_error'
                     ? 'bg-red-950 text-red-400 border border-red-800/60'
+                    : testSuiteResult.status === 'time_limit' || testSuiteResult.status === 'timeout'
+                    ? 'bg-amber-950 text-amber-400 border border-amber-800/60'
                     : 'bg-rose-950 text-rose-400 border border-rose-800/60'
                 }`}
               >
@@ -333,20 +337,35 @@ export function ProblemAndTestCasesPanel({
               {testSuiteResult.status === 'accepted' && (
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                   <div className="flex items-center gap-2">
+                    <CheckCircle size={16} className="text-emerald-400" />
                     <span className="text-base font-bold text-emerald-400">Accepted</span>
                     <span className="text-xs text-slate-400">
                       • Runtime: {testSuiteResult.totalTimeMs} ms
                     </span>
                   </div>
                   <div className="text-xs font-semibold text-emerald-400">
-                    Passed all {testSuiteResult.totalCases} / {testSuiteResult.totalCases} sample cases
+                    {testSuiteResult.passedCases} / {testSuiteResult.totalCases} sample cases passed
                   </div>
+                </div>
+              )}
+
+              {(testSuiteResult.status as string) === 'executed' && (
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle size={16} className="text-indigo-400" />
+                    <span className="text-base font-bold text-indigo-300">Executed</span>
+                    <span className="text-xs text-slate-400">
+                      • Runtime: {testSuiteResult.totalTimeMs} ms
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-400">Custom input run — no expected output</span>
                 </div>
               )}
 
               {testSuiteResult.status === 'wrong_answer' && (
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                   <div className="flex items-center gap-2">
+                    <XCircle size={16} className="text-rose-500" />
                     <span className="text-base font-bold text-rose-500">Wrong Answer</span>
                     <span className="text-xs text-slate-400">
                       • Runtime: {testSuiteResult.totalTimeMs} ms
@@ -362,7 +381,7 @@ export function ProblemAndTestCasesPanel({
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                   <div className="flex items-center gap-2">
                     <AlertTriangle size={16} className="text-rose-500" />
-                    <span className="text-base font-bold text-rose-500">Compile Error</span>
+                    <span className="text-base font-bold text-rose-500">Compilation Error</span>
                   </div>
                   <span className="text-xs text-slate-500 font-mono">Syntax / Compilation Failed</span>
                 </div>
@@ -374,17 +393,37 @@ export function ProblemAndTestCasesPanel({
                     <AlertTriangle size={16} className="text-rose-500" />
                     <span className="text-base font-bold text-rose-500">Runtime Error</span>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">Exception in execution</span>
+                  <span className="text-xs text-slate-500 font-mono">Exception during execution</span>
                 </div>
               )}
 
-              {testSuiteResult.status === 'timeout' && (
+              {(testSuiteResult.status === 'timeout' || (testSuiteResult.status as string) === 'time_limit') && (
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                   <div className="flex items-center gap-2">
                     <AlertTriangle size={16} className="text-amber-500" />
                     <span className="text-base font-bold text-amber-500">Time Limit Exceeded</span>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">Execution timed out</span>
+                  <span className="text-xs text-slate-500 font-mono">Execution timed out (6s limit)</span>
+                </div>
+              )}
+
+              {(testSuiteResult.status as string) === 'output_limit' && (
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={16} className="text-orange-500" />
+                    <span className="text-base font-bold text-orange-500">Output Limit Exceeded</span>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">Output exceeded 512KB limit</span>
+                </div>
+              )}
+
+              {(testSuiteResult.status as string) === 'judge_error' && (
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={16} className="text-slate-400" />
+                    <span className="text-base font-bold text-slate-400">Judge Error</span>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">Internal judge error — not user code</span>
                 </div>
               )}
 
@@ -523,6 +562,12 @@ export function ProblemAndTestCasesPanel({
                 className={`p-3.5 rounded-lg border flex items-center justify-between ${
                   submissionResult.verdict === 'accepted'
                     ? 'bg-emerald-950/30 border-emerald-800/80 text-emerald-300'
+                    : submissionResult.verdict === 'compile_error'
+                    ? 'bg-red-950/30 border-red-800/80 text-red-300'
+                    : (submissionResult.verdict as string) === 'time_limit'
+                    ? 'bg-amber-950/30 border-amber-800/80 text-amber-300'
+                    : (submissionResult.verdict as string) === 'judge_error'
+                    ? 'bg-slate-800/60 border-slate-600/80 text-slate-400'
                     : 'bg-rose-950/30 border-rose-800/80 text-rose-300'
                 }`}
               >
@@ -533,21 +578,50 @@ export function ProblemAndTestCasesPanel({
                         <CheckCircle size={15} className="text-emerald-400" />
                         <span>Accepted 🎉</span>
                       </>
+                    ) : (submissionResult.verdict as string) === 'judge_error' ? (
+                      <>
+                        <AlertTriangle size={15} className="text-slate-400" />
+                        <span>Judge Error</span>
+                      </>
                     ) : (
                       <>
                         <XCircle size={15} className="text-rose-400" />
-                        <span>{submissionResult.verdict.replace('_', ' ')}</span>
+                        <span>{submissionResult.verdict.replace(/_/g, ' ')}</span>
                       </>
                     )}
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
-                    Passed {submissionResult.passedCount} / {submissionResult.totalCount} tests
+                    {(submissionResult.verdict as string) === 'judge_error'
+                      ? 'Internal judge error — not caused by your code. Please try again.'
+                      : `Passed ${submissionResult.passedCount} / ${submissionResult.totalCount} tests`}
                   </div>
                 </div>
                 <div className="text-right text-[11px] text-slate-400 font-mono">
                   {submissionResult.executionTimeMs} ms
                 </div>
               </div>
+
+              {/* Compile Error / Runtime Error Details for Submissions */}
+              {submissionResult.compileError && (
+                <div className="bg-rose-950/20 border border-rose-900/60 rounded-lg p-3">
+                  <div className="text-[11px] font-semibold text-rose-400 mb-1.5 uppercase font-sans">
+                    Compiler Diagnostics
+                  </div>
+                  <pre className="text-xs text-rose-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                    {submissionResult.compileError}
+                  </pre>
+                </div>
+              )}
+              {submissionResult.runtimeError && !submissionResult.compileError && (
+                <div className="bg-rose-950/20 border border-rose-900/60 rounded-lg p-3">
+                  <div className="text-[11px] font-semibold text-rose-400 mb-1.5 uppercase font-sans">
+                    Runtime Error Traceback
+                  </div>
+                  <pre className="text-xs text-rose-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                    {submissionResult.runtimeError}
+                  </pre>
+                </div>
+              )}
 
               {/* Submission Test Case Inspector */}
               {submissionResult.testResults && submissionResult.testResults.length > 0 && (

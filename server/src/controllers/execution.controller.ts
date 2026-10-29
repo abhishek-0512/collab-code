@@ -2,7 +2,7 @@ import { Response } from 'express';
 import mongoose from 'mongoose';
 import { randomUUID } from 'node:crypto';
 import type { AuthenticatedRequest } from '../types';
-import { executeCode, evaluateTestCases, TestCaseItem } from '../services/execution.service';
+import { executeCode, evaluateTestCases, TestCaseItem, Verdict } from '../services/execution.service';
 import { getProblemBySlug } from '../services/problem.service';
 import { Submission } from '../models/Submission';
 import { sendSuccess, sendError } from '../utils/apiResponse';
@@ -14,7 +14,7 @@ export interface MemorySubmission {
   username: string;
   problemSlug?: string;
   language: string;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit';
+  status: Verdict;
   passedCount: number;
   totalCount: number;
   executionTimeMs: number;
@@ -23,7 +23,7 @@ export interface MemorySubmission {
 
 const inMemorySubmissions: MemorySubmission[] = [];
 
-// ─── Run Code (Quick Execution) ─────────────────────────────
+// ─── Run Code (Quick Execution against custom input or stdin) ───
 
 export async function runCode(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -34,23 +34,28 @@ export async function runCode(req: AuthenticatedRequest, res: Response): Promise
       timeoutMs?: number;
     };
 
-    if (!code || typeof code !== 'string') {
-      sendError(res, 'Code string is required', 422);
+    if (!code || typeof code !== 'string' || !code.trim()) {
+      sendError(res, 'Code string cannot be empty', 422);
       return;
     }
-    if (!language || typeof language !== 'string') {
+    if (!language || typeof language !== 'string' || !language.trim()) {
       sendError(res, 'Language name is required', 422);
       return;
     }
 
+    const executionId = randomUUID();
     const result = await executeCode({ code, language, stdin, timeoutMs });
-    sendSuccess(res, result);
+
+    sendSuccess(res, {
+      executionId,
+      ...result,
+    });
   } catch (err) {
     sendError(res, err instanceof Error ? err.message : 'Execution failed', 500);
   }
 }
 
-// ─── Test Code (Sample & Visible Tests) ──────────────────────
+// ─── Test Code (Sample & Visible Tests / Custom Input) ─────────
 
 export async function testCode(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -58,25 +63,37 @@ export async function testCode(req: AuthenticatedRequest, res: Response): Promis
       code: string;
       language: string;
       problemSlug?: string;
-      testCases?: Array<{ input: string; expectedOutput: string }>;
+      testCases?: Array<{ input: string; expectedOutput?: string }>;
     };
 
-    if (!code || typeof code !== 'string') {
-      sendError(res, 'Code string is required', 422);
+    if (!code || typeof code !== 'string' || !code.trim()) {
+      sendError(res, 'Code string cannot be empty', 422);
       return;
     }
-    if (!language || typeof language !== 'string') {
+    if (!language || typeof language !== 'string' || !language.trim()) {
       sendError(res, 'Language name is required', 422);
       return;
     }
 
     let casesToRun: TestCaseItem[] = [];
 
+    let targetSlug = problemSlug;
+    if (!targetSlug) {
+      if (code.includes('threeSum') || code.includes('three_sum')) targetSlug = '3sum';
+      else if (code.includes('isPalindrome') || code.includes('is_palindrome')) targetSlug = 'palindrome-number';
+      else if (code.includes('twoSum') || code.includes('two_sum')) targetSlug = 'two-sum';
+      else if (code.includes('reverseString') || code.includes('reverse_string')) targetSlug = 'reverse-string';
+      else if (code.includes('maxSubArray') || code.includes('max_sub_array')) targetSlug = 'maximum-subarray';
+    }
+
     if (Array.isArray(testCases) && testCases.length > 0) {
-      casesToRun = testCases;
-    } else if (problemSlug) {
+      casesToRun = testCases.map((tc) => ({
+        input: tc.input ?? '',
+        expectedOutput: tc.expectedOutput,
+      }));
+    } else if (targetSlug) {
       try {
-        const problem = await getProblemBySlug(problemSlug);
+        const problem = await getProblemBySlug(targetSlug);
         if (problem && problem.testCases && problem.testCases.length > 0) {
           // For sample runs, only run visible tests
           const sampleCases = problem.testCases.filter((tc: any) => !tc.isHidden);
@@ -91,18 +108,21 @@ export async function testCode(req: AuthenticatedRequest, res: Response): Promis
     }
 
     if (casesToRun.length === 0) {
-      sendError(res, 'No sample test cases found for this problem', 400);
+      sendError(res, 'No sample test cases found. Please select or import a problem from the drawer, or enter input in the Custom Input tab.', 400);
       return;
     }
 
-    const evaluation = await evaluateTestCases(code, language, casesToRun, problemSlug);
+    const evaluation = await evaluateTestCases(code, language, casesToRun, targetSlug || problemSlug, {
+      stopOnFirstFailure: false,
+    });
+
     sendSuccess(res, evaluation, 'Sample test cases evaluated');
   } catch (err) {
     sendError(res, err instanceof Error ? err.message : 'Evaluation failed', 500);
   }
 }
 
-// ─── Submit Code (Full Test Suite with Hidden Tests) ────────
+// ─── Submit Code (Full Test Suite with Hidden Tests) ───────────
 
 export async function submitCode(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -113,59 +133,57 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
       problemSlug?: string;
     };
 
-    if (!code || !language || !roomId) {
-      sendError(res, 'code, language, and roomId are required', 422);
+    if (!code || typeof code !== 'string' || !code.trim()) {
+      sendError(res, 'Code string cannot be empty', 422);
+      return;
+    }
+    if (!language || typeof language !== 'string' || !language.trim()) {
+      sendError(res, 'language is required', 422);
+      return;
+    }
+    if (!roomId) {
+      sendError(res, 'roomId is required', 422);
       return;
     }
 
     let allProblemCases: Array<{ input: string; expectedOutput: string; isHidden?: boolean }> = [];
 
-    if (problemSlug) {
+    let targetSlug = problemSlug;
+    if (!targetSlug) {
+      if (code.includes('threeSum') || code.includes('three_sum')) targetSlug = '3sum';
+      else if (code.includes('isPalindrome') || code.includes('is_palindrome')) targetSlug = 'palindrome-number';
+      else if (code.includes('twoSum') || code.includes('two_sum')) targetSlug = 'two-sum';
+      else if (code.includes('reverseString') || code.includes('reverse_string')) targetSlug = 'reverse-string';
+      else if (code.includes('maxSubArray') || code.includes('max_sub_array')) targetSlug = 'maximum-subarray';
+    }
+
+    if (targetSlug) {
       try {
-        const problem = await getProblemBySlug(problemSlug);
+        const problem = await getProblemBySlug(targetSlug);
         if (problem && problem.testCases && problem.testCases.length > 0) {
           allProblemCases = problem.testCases;
         }
       } catch {
-        // Fallback
+        // Problem not found or error loading
       }
     }
 
-    // If no test cases exist, execute single run
+    // A real online judge MUST NOT fabricate successful verdicts if test cases are missing!
     if (allProblemCases.length === 0) {
-      const singleRun = await executeCode({ code, language });
-      const verdict = singleRun.status === 'success' ? 'accepted' : singleRun.status === 'compile_error' ? 'compile_error' : 'runtime_error';
-      return sendSuccess(res, {
-        submissionId: randomUUID(),
-        verdict,
-        allPassed: verdict === 'accepted',
-        passedCount: verdict === 'accepted' ? 1 : 0,
-        totalCount: 1,
-        executionTimeMs: singleRun.executionTimeMs,
-        testResults: [],
-        status: verdict,
-      });
+      sendError(res, `No authorized test cases found for problem '${problemSlug || targetSlug || 'unknown'}'. Please select or import a problem from the drawer first.`, 400);
+      return;
     }
 
     const evaluation = await evaluateTestCases(
       code,
       language,
       allProblemCases.map((tc) => ({ input: tc.input, expectedOutput: tc.expectedOutput })),
-      problemSlug
+      targetSlug || problemSlug
     );
 
-    const verdict =
-      evaluation.status === 'compile_error'
-        ? 'compile_error'
-        : evaluation.status === 'timeout'
-        ? 'time_limit'
-        : evaluation.status === 'runtime_error'
-        ? 'runtime_error'
-        : evaluation.allPassed
-        ? 'accepted'
-        : 'wrong_answer';
+    const verdict: Verdict = evaluation.status;
 
-    // SECURITY: Mask hidden test cases so secret inputs/outputs are never leaked
+    // SECURITY: Strictly sanitize hidden test cases — never leak inputs, expected outputs, userStdout or stderr
     const sanitizedResults = evaluation.testResults.map((r, i) => {
       const isHidden = allProblemCases[i]?.isHidden ?? false;
       if (isHidden) {
@@ -177,6 +195,9 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
           passed: r.passed,
           status: r.status,
           executionTimeMs: r.executionTimeMs,
+          userStdout: undefined,
+          stderr: undefined,
+          errorMessage: r.passed ? undefined : 'Failed on hidden test case',
         };
       }
       return r;
@@ -194,7 +215,10 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
           userId: req.user?.userId ? new mongoose.Types.ObjectId(req.user.userId) : new mongoose.Types.ObjectId(),
           language,
           code,
-          status: verdict,
+          status:
+            verdict === 'judge_error' || verdict === 'output_limit'
+              ? 'runtime_error'
+              : verdict,
           output: `Passed ${evaluation.passedCases} of ${evaluation.totalCases} tests`,
           executionTimeMs: evaluation.totalTimeMs,
           testResults: sanitizedResults.map((s) => ({
@@ -226,20 +250,24 @@ export async function submitCode(req: AuthenticatedRequest, res: Response): Prom
 
     sendSuccess(res, {
       submissionId,
+      executionId: submissionId,
       verdict,
+      status: verdict,
       allPassed: evaluation.allPassed,
       passedCount: evaluation.passedCases,
       totalCount: evaluation.totalCases,
       executionTimeMs: evaluation.totalTimeMs,
+      compileOutput: evaluation.compilerError,
+      compileError: evaluation.compilerError,
+      runtimeError: evaluation.runtimeError,
       testResults: sanitizedResults,
-      status: verdict,
     }, 'Solution evaluated', 201);
   } catch (err) {
     sendError(res, err instanceof Error ? err.message : 'Submission failed', 500);
   }
 }
 
-// ─── Get Submissions ────────────────────────────────────────
+// ─── Get Submissions ──────────────────────────────────────────
 
 export async function getSubmissions(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { roomId } = req.query as { roomId?: string };

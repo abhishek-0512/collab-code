@@ -409,16 +409,331 @@ export async function getProblems(difficulty?: string) {
   return DEFAULT_PROBLEMS;
 }
 
-export async function getProblemBySlug(slug: string) {
-  if (isMongoConnected()) {
-    const problem = await Problem.findOne({ slug });
-    if (!problem) throw new Error('Problem not found');
-    return problem;
+/**
+ * Clean LeetCode HTML content to readable markdown.
+ */
+function cleanLeetCodeHtml(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<pre>([\s\S]*?)<\/pre>/gi, (_, c) => '\n```\n' + c + '\n```\n')
+    .replace(/<code>(.*?)<\/code>/gi, '`$1`')
+    .replace(/<strong class="example">/gi, '\n\nExample ')
+    .replace(/<strong>(.*?)<\/strong>/gi, '**$1**')
+    .replace(/<em>(.*?)<\/em>/gi, '*$1*')
+    .replace(/<li>/gi, '\n- ')
+    .replace(/<\/?[^>]+(>|$)/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Dynamically fetches any LeetCode problem from the official public GraphQL API.
+ * Completely free, no API key or credentials required.
+ */
+export async function fetchLeetCodeProblem(slugOrUrl: string) {
+  const cleanSlug = slugOrUrl
+    .replace(/^https?:\/\/(www\.)?leetcode\.com\/problems\//i, '')
+    .replace(/\/+$/, '')
+    .trim()
+    .toLowerCase();
+
+  if (!cleanSlug) return null;
+
+  const query = `query getQuestionDetail($titleSlug: String!) {
+    question(titleSlug: $titleSlug) {
+      questionFrontendId
+      title
+      titleSlug
+      content
+      difficulty
+      topicTags { name }
+      codeSnippets { langSlug code }
+      exampleTestcaseList
+      sampleTestCase
+    }
+  }`;
+
+  try {
+    const res = await fetch('https://leetcode.com/graphql', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Referer': 'https://leetcode.com',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      },
+      body: JSON.stringify({ query, variables: { titleSlug: cleanSlug } }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) return null;
+    const json: any = await res.json();
+    const q = json?.data?.question;
+    if (!q || !q.title) return null;
+
+    const starterCode: Record<string, string> = {};
+    if (Array.isArray(q.codeSnippets)) {
+      for (const snip of q.codeSnippets) {
+        if (snip.langSlug === 'python3' || snip.langSlug === 'python') starterCode.python = snip.code;
+        if (snip.langSlug === 'javascript') starterCode.javascript = snip.code;
+        if (snip.langSlug === 'typescript') starterCode.typescript = snip.code;
+        if (snip.langSlug === 'java') starterCode.java = snip.code;
+        if (snip.langSlug === 'cpp') starterCode.cpp = snip.code;
+      }
+    }
+
+    const examples: Array<{ input: string; output: string; explanation?: string }> = [];
+    const testCases: Array<{ input: string; expectedOutput: string; isHidden?: boolean }> = [];
+
+    const regex = /<strong>Input:<\/strong>\s*([\s\S]*?)<strong>Output:<\/strong>\s*([\s\S]*?)(?:<strong>Explanation:<\/strong>\s*([\s\S]*?))?(?=(?:<strong class="example">|Constraints:|$))/gi;
+    let match: RegExpExecArray | null;
+    const strip = (s: string) =>
+      s.replace(/<\/?[^>]+(>|$)/g, '').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+
+    while ((match = regex.exec(q.content || '')) !== null) {
+      const rawIn = strip(match[1]);
+      const rawOut = strip(match[2]);
+      examples.push({
+        input: rawIn,
+        output: rawOut,
+        explanation: match[3] ? strip(match[3]) : undefined,
+      });
+
+      const cleanInput = rawIn
+        .replace(/^[a-zA-Z0-9_]+\s*=\s*/, '')
+        .replace(/,\s*[a-zA-Z0-9_]+\s*=\s*/g, '\n');
+
+      testCases.push({
+        input: cleanInput,
+        expectedOutput: rawOut,
+        isHidden: false,
+      });
+    }
+
+    if (testCases.length === 0 && Array.isArray(q.exampleTestcaseList)) {
+      for (const tc of q.exampleTestcaseList) {
+        testCases.push({
+          input: tc,
+          expectedOutput: '',
+          isHidden: false,
+        });
+      }
+    }
+
+    let diff: 'easy' | 'medium' | 'hard' = 'medium';
+    const rawDiff = (q.difficulty || '').toLowerCase();
+    if (rawDiff === 'easy' || rawDiff === 'medium' || rawDiff === 'hard') {
+      diff = rawDiff;
+    }
+
+    return {
+      slug: cleanSlug,
+      title: `${q.questionFrontendId ? q.questionFrontendId + '. ' : ''}${q.title}`,
+      description: cleanLeetCodeHtml(q.content),
+      difficulty: diff,
+      tags: Array.isArray(q.topicTags) ? q.topicTags.map((t: any) => t.name) : ['LeetCode'],
+      constraints: '',
+      examples,
+      testCases,
+      starterCode,
+    };
+  } catch (err) {
+    console.warn(`[ProblemService] LeetCode GraphQL fetch failed for "${cleanSlug}":`, err);
+    return null;
+  }
+}
+
+function getSlugCandidates(input: string): string[] {
+  const s = input
+    .replace(/^https?:\/\/(www\.)?leetcode\.com\/problems\//i, '')
+    .replace(/\/+$/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  const numWords: Record<string, string> = {
+    zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5',
+    six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
+  };
+
+  const candidates = new Set<string>([s]);
+
+  // "three-sum" -> "3sum", "three-sum-closest" -> "3sum-closest"
+  let withDigits = s;
+  for (const [word, digit] of Object.entries(numWords)) {
+    withDigits = withDigits.replace(new RegExp(`\\b${word}\\b`, 'g'), digit);
+  }
+  withDigits = withDigits.replace(/(\d)-([a-z])/g, '$1$2');
+  candidates.add(withDigits);
+
+  // "3-sum" -> "3sum"
+  candidates.add(s.replace(/(\d)-([a-z])/g, '$1$2'));
+
+  return Array.from(candidates);
+}
+
+async function searchLeetCodeSlug(keyword: string): Promise<string | null> {
+  const query = `query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+    problemsetQuestionList: questionList(
+      categorySlug: $categorySlug
+      limit: $limit
+      skip: $skip
+      filters: $filters
+    ) {
+      questions: data {
+        title
+        titleSlug
+      }
+    }
+  }`;
+
+  try {
+    const res = await fetch('https://leetcode.com/graphql', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Referer': 'https://leetcode.com',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      },
+      body: JSON.stringify({
+        query,
+        variables: { categorySlug: '', limit: 3, skip: 0, filters: { searchKeywords: keyword } },
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+
+    const json: any = await res.json();
+    const list = json?.data?.problemsetQuestionList?.questions || [];
+    return list.length > 0 ? list[0].titleSlug : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseExamplesAndTestCasesFromText(text: string) {
+  const regex = /(?:Example\s*\d*[:\s]*)?Input:\s*([\s\S]*?)Output:\s*([\s\S]*?)(?=(?:Example\s*\d*[:\s]*|Constraints:|$))/gi;
+  let match: RegExpExecArray | null;
+  const examples: Array<{ input: string; output: string; explanation?: string }> = [];
+  const testCases: Array<{ input: string; expectedOutput: string; isHidden?: boolean }> = [];
+
+  while ((match = regex.exec(text)) !== null) {
+    let rawIn = match[1].trim();
+    let rawOut = match[2].trim();
+    let explanation: string | undefined;
+
+    const expIdx = rawOut.indexOf('Explanation:');
+    if (expIdx !== -1) {
+      explanation = rawOut.substring(expIdx + 'Explanation:'.length).trim();
+      rawOut = rawOut.substring(0, expIdx).trim();
+    }
+
+    examples.push({
+      input: rawIn,
+      output: rawOut,
+      explanation,
+    });
+
+    const cleanInput = rawIn
+      .replace(/^[a-zA-Z0-9_]+\s*=\s*/, '')
+      .replace(/,\s*[a-zA-Z0-9_]+\s*=\s*/g, '\n')
+      .trim();
+
+    testCases.push({
+      input: cleanInput,
+      expectedOutput: rawOut,
+      isHidden: false,
+    });
   }
 
-  const found = DEFAULT_PROBLEMS.find((p) => p.slug === slug);
-  if (!found) throw new Error('Problem not found');
-  return found;
+  return { examples, testCases };
+}
+
+async function ensureTestCases(prob: any) {
+  if (!prob) return prob;
+  if (!prob.testCases || prob.testCases.length === 0) {
+    const parsed = parseExamplesAndTestCasesFromText(prob.description || '');
+    if (parsed.testCases.length > 0) {
+      prob.testCases = parsed.testCases;
+      if (!prob.examples || prob.examples.length === 0) {
+        prob.examples = parsed.examples;
+      }
+    } else {
+      // Try LeetCode search to find official test cases
+      const searchKey = (prob.title || prob.slug || '').replace(/-/g, ' ');
+      const lcSlug = await searchLeetCodeSlug(searchKey);
+      if (lcSlug) {
+        const lcProb = await fetchLeetCodeProblem(lcSlug);
+        if (lcProb && lcProb.testCases && lcProb.testCases.length > 0) {
+          prob.testCases = lcProb.testCases;
+          if (!prob.examples || prob.examples.length === 0) prob.examples = lcProb.examples;
+          if (lcProb.starterCode && (!prob.starterCode || Object.keys(prob.starterCode).length === 0)) {
+            prob.starterCode = lcProb.starterCode;
+          }
+        }
+      }
+    }
+  }
+  return prob;
+}
+
+export async function getProblemBySlug(slug: string) {
+  const candidates = getSlugCandidates(slug);
+
+  // 1. Check local MongoDB or memory defaults for any candidate alias
+  for (const cand of candidates) {
+    if (isMongoConnected()) {
+      const problem = await Problem.findOne({ slug: cand });
+      if (problem) return ensureTestCases(problem);
+    }
+    const found = DEFAULT_PROBLEMS.find((p) => p.slug === cand);
+    if (found) return ensureTestCases(found);
+  }
+
+  // 2. Query LeetCode GraphQL for each candidate slug
+  for (const cand of candidates) {
+    const fetched = await fetchLeetCodeProblem(cand);
+    if (fetched) {
+      if (isMongoConnected()) {
+        try {
+          const created = await Problem.create(fetched);
+          return created;
+        } catch {
+          return fetched;
+        }
+      } else {
+        DEFAULT_PROBLEMS.push(fetched as any);
+        return fetched;
+      }
+    }
+  }
+
+  // 3. Fallback: Search LeetCode by keyword/title
+  const searchKeyword = slug.replace(/-/g, ' ');
+  const searchSlug = await searchLeetCodeSlug(searchKeyword);
+  if (searchSlug && !candidates.includes(searchSlug)) {
+    const fetched = await fetchLeetCodeProblem(searchSlug);
+    if (fetched) {
+      if (isMongoConnected()) {
+        try {
+          const created = await Problem.create(fetched);
+          return created;
+        } catch {
+          return fetched;
+        }
+      } else {
+        DEFAULT_PROBLEMS.push(fetched as any);
+        return fetched;
+      }
+    }
+  }
+
+  throw new Error('Problem not found');
 }
 
 export async function createProblem(data: {
@@ -439,8 +754,16 @@ export async function createProblem(data: {
   const difficulty = data.difficulty || 'medium';
   const tags = data.tags && data.tags.length > 0 ? data.tags : ['DSA', 'LeetCode'];
   const constraints = data.constraints || '';
-  const examples = data.examples || [];
-  const testCases = data.testCases || [];
+  let examples = data.examples || [];
+  let testCases = data.testCases || [];
+
+  if (testCases.length === 0) {
+    const parsed = parseExamplesAndTestCasesFromText(data.description || '');
+    if (parsed.testCases.length > 0) {
+      testCases = parsed.testCases;
+      if (examples.length === 0) examples = parsed.examples;
+    }
+  }
   const starterCode = data.starterCode || {
     javascript: '// Write your solution here\nfunction solution() {\n  \n}\n',
     python: '# Write your solution here\ndef solution():\n    pass\n',

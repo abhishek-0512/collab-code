@@ -1,13 +1,26 @@
 import api from './api';
 import type { ExecutionResult, ApiResponse, TestSuiteEvaluationResult } from '../types';
 
+export type SubmissionVerdict =
+  | 'accepted'
+  | 'wrong_answer'
+  | 'compile_error'
+  | 'runtime_error'
+  | 'time_limit'
+  | 'output_limit'
+  | 'judge_error';
+
 export interface SubmissionResponse {
   submissionId: string;
-  verdict: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit';
+  executionId?: string;
+  verdict: SubmissionVerdict;
   allPassed: boolean;
   passedCount: number;
   totalCount: number;
   executionTimeMs: number;
+  compileOutput?: string;
+  compileError?: string;
+  runtimeError?: string;
   testResults: Array<{
     index: number;
     input: string;
@@ -17,6 +30,7 @@ export interface SubmissionResponse {
     status: string;
     executionTimeMs: number;
     stderr?: string;
+    errorMessage?: string;
   }>;
   status: string;
 }
@@ -28,7 +42,7 @@ export interface SubmissionRecord {
   username: string;
   problemSlug?: string;
   language: string;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit';
+  status: SubmissionVerdict;
   passedCount: number;
   totalCount: number;
   executionTimeMs: number;
