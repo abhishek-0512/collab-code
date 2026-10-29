@@ -3,7 +3,7 @@ import type { ExecutionResult, ApiResponse, TestSuiteEvaluationResult } from '..
 
 export interface SubmissionResponse {
   submissionId: string;
-  verdict: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit';
+  verdict: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit' | 'judge_error';
   allPassed: boolean;
   passedCount: number;
   totalCount: number;
@@ -28,7 +28,7 @@ export interface SubmissionRecord {
   username: string;
   problemSlug?: string;
   language: string;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit';
+  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'time_limit' | 'judge_error';
   passedCount: number;
   totalCount: number;
   executionTimeMs: number;

@@ -16,7 +16,11 @@ services:
       - MONGODB_URI=mongodb://mongo:27017/collab-code
       - JWT_SECRET=change-this-in-production-collab-code-jwt-secret
       - REDIS_URL=redis://redis:6379
-      - PISTON_URL=https://emkc.org/api/v2/piston
+      - EXECUTION_PROVIDER=judge0
+      - JUDGE0_URL=https://ce.judge0.com
+      - JUDGE0_TOKEN=
+      - EXECUTION_TIMEOUT_MS=8000
+      - EXECUTION_OUTPUT_LIMIT_BYTES=262144
     depends_on:
       - mongo
       - redis

@@ -4,9 +4,11 @@ export interface ISubmission extends Document {
   roomId: string;
   userId: mongoose.Types.ObjectId;
   problemId?: mongoose.Types.ObjectId;
+  problemSlug?: string;
+  judgeVersion?: string;
   language: string;
   code: string;
-  status: 'pending' | 'running' | 'accepted' | 'wrong_answer' | 'time_limit' | 'runtime_error' | 'compile_error';
+  status: 'pending' | 'running' | 'accepted' | 'wrong_answer' | 'time_limit' | 'runtime_error' | 'compile_error' | 'judge_error';
   output?: string;
   error?: string;
   executionTimeMs?: number;
@@ -20,11 +22,13 @@ const submissionSchema = new Schema<ISubmission>(
     roomId: { type: String, required: true, index: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     problemId: { type: Schema.Types.ObjectId, ref: 'Problem' },
+      problemSlug: { type: String, index: true },
+      judgeVersion: String,
     language: { type: String, required: true },
     code: { type: String, required: true },
     status: {
       type: String,
-      enum: ['pending', 'running', 'accepted', 'wrong_answer', 'time_limit', 'runtime_error', 'compile_error'],
+      enum: ['pending', 'running', 'accepted', 'wrong_answer', 'time_limit', 'runtime_error', 'compile_error', 'judge_error'],
       default: 'pending',
     },
     output: String,

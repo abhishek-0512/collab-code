@@ -61,6 +61,7 @@
 - **Isolated Execution Boundary**: Arbitrary code is executed in isolated containers under strict resource limits (256MB memory cap, 10s CPU timeout, non-root process space).
 - **Supported Runtimes**: JavaScript (Node 18), TypeScript 5, Python 3.10, Java 15, C++ (GCC 10), Go 1.16, and Rust 1.50.
 - **Rich Diagnostic Reporting**: Standard output, standard error, exit codes, execution wall-clock time, and compiler diagnostics.
+- **Explicit Provider Semantics**: Judge0 failures are reported as `judge_error`; they are never converted into accepted or wrong-answer results. The local runner is development-only.
 
 ### Problem Practice Catalog
 - Built-in LeetCode-style algorithmic challenges (Two Sum, Valid Parentheses, Reverse Linked List, Maximum Subarray, Climbing Stairs).
@@ -84,7 +85,7 @@
 | **Backend** | Node.js 20+, Express 5, TypeScript 5.7, Socket.IO 4.8 |
 | **Database & Cache** | MongoDB Atlas, Mongoose 8, Redis 7 (optional Pub/Sub adapter) |
 | **Validation & Auth** | Zod, JSON Web Tokens (`jsonwebtoken`), bcryptjs |
-| **Execution Sandbox** | Isolated Piston Engine / Judge0 API Boundary |
+| **Execution Sandbox** | Judge0 provider boundary with a development-only local runner |
 | **DevOps & CI/CD** | Docker, Docker Compose, Nginx, GitHub Actions |
 
 ---
@@ -155,6 +156,19 @@ The server runs out-of-the-box with in-memory fallback stores if `MONGODB_URI` i
 ```env
 MONGODB_URI=mongodb+srv://<username>:<password>@cluster0.abcde.mongodb.net/collab-code?retryWrites=true&w=majority
 ```
+
+Configure managed judging with server-only variables:
+```env
+EXECUTION_PROVIDER=judge0
+JUDGE0_URL=https://ce.judge0.com
+JUDGE0_TOKEN=<server-only-token>
+EXECUTION_TIMEOUT_MS=8000
+EXECUTION_OUTPUT_LIMIT_BYTES=262144
+```
+
+The problem API exposes only public test cases. Hidden tests are loaded through the
+judge-only path and masked in submission responses. Problems without a verified
+authoritative suite cannot be submitted.
 
 ### 2. Install Dependencies
 

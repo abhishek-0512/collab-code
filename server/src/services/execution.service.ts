@@ -4,21 +4,10 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { env } from '../config/env';
+import { Judge0Provider } from './execution/judge0.provider';
+import type { ExecutionRequest, ExecutionResult } from './execution/provider';
 
-export interface ExecutionRequest {
-  language: string;
-  code: string;
-  stdin?: string;
-  timeoutMs?: number;
-}
-
-export interface ExecutionResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  executionTimeMs: number;
-  status: 'success' | 'error' | 'timeout' | 'compile_error' | 'unavailable';
-}
+export type { ExecutionRequest, ExecutionResult };
 
 const LANGUAGE_CONFIG: Record<string, { language: string; version: string }> = {
   javascript: { language: 'javascript', version: '18.15.0' },
@@ -74,9 +63,10 @@ async function executeLocally(req: ExecutionRequest): Promise<ExecutionResult> {
       await fs.writeFile(srcPath, req.code, 'utf-8');
 
       const compileRes = await new Promise<{ exitCode: number; stderr: string }>((resolve) => {
-        const cp = spawn('clang++', ['-std=c++17', srcPath, '-o', binPath]);
+        const cp = spawn('g++', ['-std=c++17', srcPath, '-o', binPath]);
         let err = '';
         cp.stderr.on('data', (d) => (err += d.toString()));
+        cp.on('error', (error) => resolve({ exitCode: 127, stderr: error.message }));
         cp.on('close', (code) => resolve({ exitCode: code ?? 1, stderr: err }));
       });
 
@@ -106,7 +96,7 @@ async function executeLocally(req: ExecutionRequest): Promise<ExecutionResult> {
       };
     }
 
-    const timeoutMs = req.timeoutMs || 8000;
+    const timeoutMs = req.timeoutMs || env.EXECUTION_TIMEOUT_MS;
     return await new Promise<ExecutionResult>((resolve) => {
       let stdout = '';
       let stderr = '';
@@ -119,19 +109,26 @@ async function executeLocally(req: ExecutionRequest): Promise<ExecutionResult> {
         child.kill('SIGKILL');
       }, timeoutMs);
 
-      if (req.stdin) {
-        child.stdin.write(req.stdin);
+      child.stdin.on('error', () => {
+        // The process may exit before consuming stdin (for example after a compile error).
+      });
+      try {
+        child.stdin.write(req.stdin || '');
         child.stdin.end();
-      } else {
-        child.stdin.end();
+      } catch {
+        // The child lifecycle result is reported through the close/error handlers below.
       }
 
       child.stdout.on('data', (data) => {
-        if (stdout.length < 256 * 1024) stdout += data.toString();
+        if (stdout.length < env.EXECUTION_OUTPUT_LIMIT_BYTES) {
+          stdout += data.toString().slice(0, env.EXECUTION_OUTPUT_LIMIT_BYTES - stdout.length);
+        }
       });
 
       child.stderr.on('data', (data) => {
-        if (stderr.length < 256 * 1024) stderr += data.toString();
+        if (stderr.length < env.EXECUTION_OUTPUT_LIMIT_BYTES) {
+          stderr += data.toString().slice(0, env.EXECUTION_OUTPUT_LIMIT_BYTES - stderr.length);
+        }
       });
 
       child.on('error', (err) => {
@@ -194,13 +191,37 @@ async function executeLocally(req: ExecutionRequest): Promise<ExecutionResult> {
   }
 }
 
-/**
- * Code Execution Service
- *
- * Tiers:
- * 1. Self-hosted Piston / Judge0 sandbox (if configured and reachable).
- * 2. Sandboxed isolated local subprocess runner (with memory, CPU timeout, and path isolation).
- */
+const judge0Provider = new Judge0Provider();
+
+async function executeWithJudge0(req: ExecutionRequest): Promise<ExecutionResult> {
+  const startedAt = Date.now();
+  try {
+    const token = await judge0Provider.submitExecution(req);
+    const deadline = startedAt + (req.timeoutMs || env.EXECUTION_TIMEOUT_MS) + 15000;
+    while (Date.now() < deadline) {
+      const result = await judge0Provider.getExecutionResult(token);
+      if (result) return { ...result, executionTimeMs: result.executionTimeMs || Date.now() - startedAt };
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return {
+      stdout: '',
+      stderr: 'Execution provider polling timed out.',
+      exitCode: 124,
+      executionTimeMs: Date.now() - startedAt,
+      status: 'unavailable',
+      providerReference: token,
+    };
+  } catch (error) {
+    return {
+      stdout: '',
+      stderr: error instanceof Error ? error.message : 'Execution provider unavailable.',
+      exitCode: 1,
+      executionTimeMs: Date.now() - startedAt,
+      status: 'unavailable',
+    };
+  }
+}
+
 export async function executeCode(req: ExecutionRequest): Promise<ExecutionResult> {
   const langConfig = LANGUAGE_CONFIG[req.language.toLowerCase()];
   if (!langConfig) {
@@ -213,85 +234,19 @@ export async function executeCode(req: ExecutionRequest): Promise<ExecutionResul
     };
   }
 
-  const pistonUrl = env.PISTON_URL || '';
-
-  // If PISTON_URL is the public emkc.org (which requires whitelist) or empty, use local sandbox directly
-  if (!pistonUrl || pistonUrl.includes('emkc.org')) {
+  if (env.EXECUTION_PROVIDER.toLowerCase() === 'judge0') {
+    return executeWithJudge0(req);
+  }
+  if (env.EXECUTION_PROVIDER.toLowerCase() === 'local') {
     return executeLocally(req);
   }
-
-  const startTime = Date.now();
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch(`${pistonUrl}/execute`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        language: langConfig.language,
-        version: langConfig.version,
-        files: [{ content: req.code }],
-        stdin: req.stdin || '',
-        run_timeout: req.timeoutMs || 10000,
-        compile_timeout: 15000,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      // Fallback to local sandbox if remote engine fails
-      return executeLocally(req);
-    }
-
-    const data = (await response.json()) as {
-      run: { stdout?: string; stderr?: string; code?: number; signal?: string };
-      compile?: { stdout?: string; stderr?: string; code?: number };
-    };
-
-    const duration = Date.now() - startTime;
-
-    if (data.compile && data.compile.code !== 0 && data.compile.code !== undefined) {
-      return {
-        stdout: data.compile.stdout || '',
-        stderr: data.compile.stderr || 'Compilation error',
-        exitCode: data.compile.code,
-        executionTimeMs: duration,
-        status: 'compile_error',
-      };
-    }
-
-    const run = data.run || {};
-    const stdout = run.stdout || '';
-    const stderr = run.stderr || '';
-    const exitCode = run.code ?? 0;
-
-    if (run.signal === 'SIGKILL' || run.signal === 'SIGTERM') {
-      return {
-        stdout,
-        stderr: stderr || 'Execution timed out (Time Limit Exceeded).',
-        exitCode: 137,
-        executionTimeMs: duration,
-        status: 'timeout',
-      };
-    }
-
-    return {
-      stdout,
-      stderr,
-      exitCode,
-      executionTimeMs: duration,
-      status: exitCode === 0 ? 'success' : 'error',
-    };
-  } catch {
-    // Graceful fallback to local sandbox
-    return executeLocally(req);
-  }
+  return {
+    stdout: '',
+    stderr: `Unsupported execution provider "${env.EXECUTION_PROVIDER}".`,
+    exitCode: 1,
+    executionTimeMs: 0,
+    status: 'unavailable',
+  };
 }
 
 // ─── DSA Test Case Evaluation Engine ────────────────────────
@@ -318,7 +273,7 @@ export interface TestSuiteEvaluationResult {
   allPassed: boolean;
   totalCases: number;
   passedCases: number;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout';
+  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error';
   testResults: TestCaseEvaluationItem[];
   totalTimeMs: number;
   compilerError?: string;
@@ -342,65 +297,22 @@ export function normalizeOutput(val: string): string {
 }
 
 export function compareOutputs(actual: string, expected?: string, problemSlug?: string): boolean {
-  if (expected === undefined || expected === null || expected.trim() === '') {
-    // Custom testcase without specified expected output: considered successful run if executed without error
-    return true;
-  }
-
+  if (expected === undefined || expected === null || expected.trim() === '') return false;
   const cleanActual = (actual || '').trim();
-  const cleanExpected = (expected || '').trim();
+  const cleanExpected = expected.trim();
   if (cleanActual === cleanExpected) return true;
-
-  // Booleans (e.g. true vs True or 1)
-  const actLower = cleanActual.toLowerCase();
-  const expLower = cleanExpected.toLowerCase();
-  if (
-    (actLower === 'true' && (expLower === 'true' || expLower === '1')) ||
-    (actLower === 'false' && (expLower === 'false' || expLower === '0'))
-  ) {
-    return true;
-  }
-
-  // Quoted string vs unquoted string (e.g. "olleh" vs olleh)
-  if (
-    cleanActual === `"${cleanExpected}"` ||
-    `"${cleanActual}"` === cleanExpected ||
-    cleanActual.replace(/^"|"$/g, '') === cleanExpected.replace(/^"|"$/g, '')
-  ) {
-    return true;
-  }
-
-  // Numbers (e.g. 4.0 vs 4)
-  if (!isNaN(Number(cleanActual)) && !isNaN(Number(cleanExpected))) {
-    if (Number(cleanActual) === Number(cleanExpected)) return true;
-  }
-
-  // JSON comparisons
   try {
-    const actJson = JSON.parse(cleanActual.replace(/'/g, '"'));
-    const expJson = JSON.parse(cleanExpected.replace(/'/g, '"'));
-
-    if (Array.isArray(actJson) && Array.isArray(expJson)) {
-      if (actJson.length !== expJson.length) return false;
-      // If two-sum, order of indices can be [0,1] or [1,0]
-      const normSlug = (problemSlug || '').toLowerCase().replace(/_/g, '-');
-      if (normSlug === 'two-sum' && actJson.length === 2) {
-        const sortedAct = [...actJson].sort((a, b) => a - b);
-        const sortedExp = [...expJson].sort((a, b) => a - b);
-        return sortedAct.every((val, idx) => val === sortedExp[idx]);
-      }
-      return JSON.stringify(actJson) === JSON.stringify(expJson);
+    const actJson = JSON.parse(cleanActual);
+    const expJson = JSON.parse(cleanExpected);
+    if (problemSlug === 'two-sum' && Array.isArray(actJson) && Array.isArray(expJson)) {
+      return [...actJson].sort((a, b) => a - b).join(',') === [...expJson].sort((a, b) => a - b).join(',');
     }
-
-    if (typeof actJson === 'object' && typeof expJson === 'object') {
-      return JSON.stringify(actJson) === JSON.stringify(expJson);
-    }
-
-    return actJson === expJson;
+    return JSON.stringify(actJson) === JSON.stringify(expJson);
   } catch {
-    const normA = cleanActual.replace(/\s+/g, '').toLowerCase();
-    const normB = cleanExpected.replace(/\s+/g, '').toLowerCase();
-    return normA === normB;
+    if (!Number.isNaN(Number(cleanActual)) && !Number.isNaN(Number(cleanExpected))) {
+      return Number(cleanActual) === Number(cleanExpected);
+    }
+    return cleanActual.replace(/\r\n/g, '\n') === cleanExpected.replace(/\r\n/g, '\n');
   }
 }
 
@@ -909,7 +821,7 @@ export async function evaluateTestCases(
   const startTime = Date.now();
   const testResults: TestCaseEvaluationItem[] = [];
   let allPassed = true;
-  let overallStatus: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' = 'accepted';
+  let overallStatus: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error' = 'accepted';
   let topCompilerError: string | undefined;
   let topRuntimeError: string | undefined;
 
@@ -923,6 +835,24 @@ export async function evaluateTestCases(
       stdin,
       timeoutMs: 6000,
     });
+
+    // Provider failures are judge failures, never user verdicts.
+    if (execResult.status === 'unavailable') {
+      overallStatus = 'judge_error';
+      allPassed = false;
+      testResults.push({
+        index: i + 1,
+        input: tc.input,
+        expectedOutput: tc.expectedOutput,
+        actualOutput: 'Judge Error',
+        passed: false,
+        status: 'runtime_error',
+        executionTimeMs: execResult.executionTimeMs,
+        stderr: execResult.stderr,
+        errorMessage: execResult.stderr || 'Execution provider unavailable',
+      });
+      break;
+    }
 
     // 1. Compilation Error
     if (execResult.status === 'compile_error') {

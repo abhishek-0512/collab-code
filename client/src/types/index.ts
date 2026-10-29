@@ -87,7 +87,7 @@ export interface TestSuiteEvaluationResult {
   allPassed: boolean;
   totalCases: number;
   passedCases: number;
-  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout';
+  status: 'accepted' | 'wrong_answer' | 'compile_error' | 'runtime_error' | 'timeout' | 'judge_error';
   testResults: TestCaseEvaluation[];
   totalTimeMs: number;
   compilerError?: string;
